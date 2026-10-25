@@ -1,0 +1,9 @@
+# Direct dependencies. Lock with:
+#   uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes \
+#     --exclude-newer 2026-10-11 -o requirements.txt
+a2a-sdk[http-server]==1.2.2
+cryptography
+httpx
+jcs
+uvicorn
+pytest
