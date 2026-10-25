@@ -1,0 +1,14 @@
+AAE A2A Extension Profile and Reference Implementation
+Copyright (c) 2026 CryptoKRI GmbH, Zurich (MolTrust)
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes code derived from AAE Conformance Vectors
+(https://github.com/MoltyCel/aae-conformance-vectors),
+Copyright (c) 2026 CryptoKRI GmbH, Zurich (MolTrust), Apache License 2.0:
+  - aae_a2a/verifier.py  (from examples/python-verify.py)
+  - aae_a2a/enforce.py   (from examples/enforce-verify.py)
+
+The keys derived in aae_a2a/testkeys.py are public test keys that exist only
+to make the demo reproducible. They are not secrets and MUST NOT be used in
+production.
