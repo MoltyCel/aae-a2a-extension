@@ -81,9 +81,10 @@ We would like maintainer guidance on the use of §7.6. Is
 `TASK_STATE_AUTH_REQUIRED` with the challenge in `TaskStatus.message.metadata`
 the intended use for an extension-defined credential exchange?
 
-When an extension refuses authorization for a well-formed request, is
-`TASK_STATE_REJECTED` with structured metadata preferred over a JSON-RPC error? A2A defines no authorization error code, and
-the `-32001..-32099` range is reserved for A2A errors.
+A2A defines no authorization error code, and the `-32001..-32099` range is
+reserved for A2A errors. When an extension refuses authorization for a
+well-formed request, is `TASK_STATE_REJECTED` with structured metadata
+preferred over a JSON-RPC error?
 
 Related: #1716 (skill-level authorization), #1937 (binding delegated authority
 to a context), #2028 (on-behalf-of delegation payload), #2133 (exact-message
