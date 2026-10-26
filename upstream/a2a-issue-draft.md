@@ -52,8 +52,8 @@ CONSTRAINTS and VALIDITY blocks.
   revision, the challenge audience, a map from skill id to mandate action, and
   optionally accepted issuers, DID methods and the agent's own AAE.
 - Activation: `A2A-Extensions`. Data: `Message.metadata[<uri>]`.
-- Request: the AAE in metadata plus exactly one data Part
-  `{"skill", "transaction"}`; that part is what gets authorized and executed.
+- Request: the AAE in metadata plus a single data Part
+  `{"skill", "transaction"}`. The server authorizes and executes that part.
 - Proof of possession (draft §5 step 4): the server answers with a Task in
   `TASK_STATE_AUTH_REQUIRED` carrying a nonce; the client returns a JWS over
   `{nonce, aud, iat, aae_id}` on the same task. The nonce is bound to the task.
@@ -77,15 +77,13 @@ https://github.com/MoltyCel/aae-a2a-extension
 
 ### Additional context
 
-Two questions where we would like maintainer guidance:
+We would like maintainer guidance on the use of §7.6. Is
+`TASK_STATE_AUTH_REQUIRED` with the challenge in `TaskStatus.message.metadata`
+the intended use for an extension-defined credential exchange?
 
-1. Is `TASK_STATE_AUTH_REQUIRED` with the challenge in
-   `TaskStatus.message.metadata` the intended use of §7.6 for an
-   extension-defined credential exchange?
-2. For an authorization refusal decided by an extension after the request was
-   well formed, is `TASK_STATE_REJECTED` with structured metadata preferred
-   over a JSON-RPC error? A2A defines no authorization error code, and the
-   `-32001..-32099` range is reserved for A2A errors.
+When an extension refuses authorization for a well-formed request, is
+`TASK_STATE_REJECTED` with structured metadata preferred over a JSON-RPC error? A2A defines no authorization error code, and
+the `-32001..-32099` range is reserved for A2A errors.
 
 Related: #1716 (skill-level authorization), #1937 (binding delegated authority
 to a context), #2028 (on-behalf-of delegation payload), #2133 (exact-message
