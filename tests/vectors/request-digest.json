@@ -1,0 +1,71 @@
+{
+  "description": "request_digest test vectors, spec section 8.5: SHA-256 over the RFC 8785 serialization of the request part, as 'sha256:' and lowercase hex. 'jcs' is the exact UTF-8 input to SHA-256.",
+  "vectors": [
+    {
+      "id": "spec-6.1-example",
+      "note": "The request part of the Section 6.1 example.",
+      "request_part": {
+        "skill": "place-order",
+        "transaction": {
+          "amount": 120,
+          "currency": "EUR",
+          "items": [
+            {
+              "sku": "PAPER-A4",
+              "qty": 20
+            }
+          ]
+        }
+      },
+      "jcs": "{\"skill\":\"place-order\",\"transaction\":{\"amount\":120,\"currency\":\"EUR\",\"items\":[{\"qty\":20,\"sku\":\"PAPER-A4\"}]}}",
+      "request_digest": "sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a"
+    },
+    {
+      "id": "member-order-and-numbers",
+      "note": "Members out of order, an integral value sent as a double (Section 6.4), a fraction and a non-ASCII string. JCS sorts members by UTF-16 code units and writes 120.0 as 120.",
+      "request_part": {
+        "transaction": {
+          "note": "Bürobedarf",
+          "unit_price": 6.25,
+          "amount": 120.0,
+          "currency": "EUR"
+        },
+        "skill": "place-order"
+      },
+      "jcs": "{\"skill\":\"place-order\",\"transaction\":{\"amount\":120,\"currency\":\"EUR\",\"note\":\"Bürobedarf\",\"unit_price\":6.25}}",
+      "request_digest": "sha256:20673ecb3bc45abe8dd1aa5455aa90397eb769e42f9af1cff56680f4204eb0c1"
+    },
+    {
+      "id": "same-skill-other-transaction",
+      "note": "Same skill as the first case, a different amount: a different digest.",
+      "request_part": {
+        "skill": "place-order",
+        "transaction": {
+          "amount": 121,
+          "currency": "EUR",
+          "items": [
+            {
+              "sku": "PAPER-A4",
+              "qty": 20
+            }
+          ]
+        }
+      },
+      "jcs": "{\"skill\":\"place-order\",\"transaction\":{\"amount\":121,\"currency\":\"EUR\",\"items\":[{\"qty\":20,\"sku\":\"PAPER-A4\"}]}}",
+      "request_digest": "sha256:fd2490962a20b0d8223d69248ffa5f073180e791864295247ed1eed8661f48f9"
+    },
+    {
+      "id": "appendix-a-request",
+      "note": "The request part of the Appendix A exchange.",
+      "request_part": {
+        "skill": "place-order",
+        "transaction": {
+          "amount": 120,
+          "currency": "EUR"
+        }
+      },
+      "jcs": "{\"skill\":\"place-order\",\"transaction\":{\"amount\":120,\"currency\":\"EUR\"}}",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"
+    }
+  ]
+}

@@ -32,8 +32,14 @@ JSON-RPC:
 
 - (a) an order inside the mandate: accepted, task completed, receipt in the
   task metadata;
+- (a2) an order inside the mandate for an item the supplier does not stock:
+  accepted, the skill fails, task failed with the ACCEPT receipt still in the
+  task metadata;
 - (b) an order above the `max_transaction_value` constraint: task rejected at
-  step 7;
+  step 7, the skill never invoked;
+
+Every result carries `request_digest`, which the demo recomputes from the
+request it sent (spec Section 8.5, vectors in `tests/vectors/`).
 - (c) the extension not activated, the AAE missing, and a forged AAE:
   `ExtensionSupportRequiredError`, `InvalidParamsError`, and a task rejected at
   step 1.
