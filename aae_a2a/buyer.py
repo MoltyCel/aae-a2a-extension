@@ -108,7 +108,8 @@ class BuyerAgent:
     async def request(self, skill: str, transaction: dict, *, aae: str | None,
                       aae_id: str | None = None, ancestor_jws: list[str] | None = None,
                       activate: bool = True, respond=None) -> Task:
-        """Full flow. Returns the final Task (COMPLETED or REJECTED), or raises the
+        """Full flow. Returns the final Task (COMPLETED or FAILED after an accepted
+        presentation, REJECTED otherwise), or raises the
         SDK's A2A error for a JSON-RPC error. `respond` may replace the
         challenge-response producer (tests use it to send bad responses)."""
         task = await self._send(self.request_message(skill, transaction, aae=aae,

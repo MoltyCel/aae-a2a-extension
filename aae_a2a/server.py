@@ -6,8 +6,11 @@ Profile mapping (spec sections 5-8):
              data Part {"skill", "transaction"}  ->  section 5 steps 1-3, then
              Task in TASK_STATE_AUTH_REQUIRED carrying the step-4 challenge
   message 2  SendMessage on that task with metadata[URI] = {"challenge_response"}
-             ->  section 5 steps 1-9, then TASK_STATE_COMPLETED with a receipt in
-             Task.metadata[URI], or TASK_STATE_REJECTED with the failing step
+             ->  section 5 steps 1-9. Accepted: the skill runs and the task ends in
+             its outcome, TASK_STATE_COMPLETED or TASK_STATE_FAILED, with the
+             ACCEPT receipt in Task.metadata[URI] either way. Rejected:
+             TASK_STATE_REJECTED with the failing step, and the skill never runs.
+             Both results carry request_digest (spec section 8.5).
 Protocol violations (extension not activated, metadata missing) are JSON-RPC
 errors and create no task.
 """
@@ -49,6 +52,7 @@ from a2a.utils.errors import ExtensionSupportRequiredError, InvalidParamsError
 from .challenge import ChallengeError, SubjectBinding, utc_now
 from .constants import A2A_EXTENSIONS_HEADER, AAE_DRAFT, EXTENSION_URI, MAX_ANCESTORS
 from .didres import LocalDidResolver
+from .digest import request_digest
 from .verifier import STEP_NAMES, AaeVerifier, Reject
 
 log = logging.getLogger("aae_a2a.supplier")
@@ -186,6 +190,31 @@ class AaeRequestHandler(DefaultRequestHandler):
 
 # --- executor: AAE verification and the skill itself -------------------------------
 
+class SkillFailed(Exception):
+    """The skill ran and did not succeed. The authorization decision stands."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+# What the example supplier stocks. An order for anything else is accepted by
+# the AAE check and then fails in the skill: the paired case of section 8.3.
+CATALOGUE = frozenset({"PAPER-A4", "TONER-K1"})
+
+
+def perform_skill(skill: str, tx: dict) -> dict:
+    if skill == "place-order":
+        unknown = sorted({i.get("sku") for i in tx.get("items", []) if isinstance(i, dict)}
+                         - CATALOGUE, key=str)
+        if unknown:
+            raise SkillFailed(f"not in catalogue: {', '.join(map(str, unknown))}")
+        return {"order_id": "PO-0001", "status": "confirmed",
+                "amount": tx.get("amount"), "currency": tx.get("currency"),
+                "items": tx.get("items", [])}
+    return {"quote": {"items": tx.get("items", []), "valid_minutes": 30}}
+
+
 @dataclass
 class _Pending:
     aae: str
@@ -194,6 +223,7 @@ class _Pending:
     transaction: dict
     aae_id: str
     nonce: str
+    request_digest: str
 
 
 @dataclass
@@ -202,6 +232,7 @@ class SupplierExecutor(AgentExecutor):
     verifier: AaeVerifier
     binding: SubjectBinding
     clock: callable = utc_now
+    perform: callable = perform_skill
     pending: dict[str, _Pending] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -234,25 +265,31 @@ class SupplierExecutor(AgentExecutor):
     async def _first_message(self, context: RequestContext, updater: TaskUpdater) -> None:
         msg = context.message
         if EXTENSION_URI not in context.requested_extensions:
-            await self._reject(updater, Reject(0, "extension_not_activated"))
+            req = request_part(msg)
+            await self._reject(updater, Reject(0, "extension_not_activated"),
+                               request_digest(req) if req is not None else None)
             return
         md = extension_metadata(msg)
         req = request_part(msg)
+        # Frozen here: the challenge response cannot change the request (6.3),
+        # so this digest is the one every result on this task reports.
+        digest = request_digest(req)
         skill = self.cfg.skills.get(req["skill"])
         if skill is None:
-            await self._reject(updater, Reject(0, "skill_not_gated", req["skill"]))
+            await self._reject(updater, Reject(0, "skill_not_gated", req["skill"]), digest)
             return
         now = self.clock()
         try:
             vc = self.verifier.precheck(md["aae"], now)
         except Reject as r:
-            await self._reject(updater, r)
+            await self._reject(updater, r, digest)
             return
         nonce = self.binding.mint(self.cfg.audience, vc["id"], now)
         with self.lock:
             self.pending[context.task_id] = _Pending(
                 aae=md["aae"], ancestor_jws=md.get("ancestor_jws", []), skill=req["skill"],
-                transaction=req["transaction"], aae_id=vc["id"], nonce=nonce)
+                transaction=req["transaction"], aae_id=vc["id"], nonce=nonce,
+                request_digest=digest)
         challenge = {"nonce": nonce, "aud": self.cfg.audience, "aae_id": vc["id"]}
         status_msg = updater.new_agent_message(parts=[Part(
             text="AAE steps 1-3 passed. Prove control of credentialSubject.id: return a JWS "
@@ -266,7 +303,8 @@ class SupplierExecutor(AgentExecutor):
         md = extension_metadata(context.message)
         response = md.get("challenge_response") if isinstance(md, dict) else None
         if EXTENSION_URI not in context.requested_extensions or not isinstance(response, str):
-            await self._reject(updater, Reject(4, "challenge_response_missing"))
+            await self._reject(updater, Reject(4, "challenge_response_missing"),
+                               p.request_digest)
             return
         now = self.clock()
         action = self.cfg.skills[p.skill]["action"]
@@ -287,7 +325,7 @@ class SupplierExecutor(AgentExecutor):
                 action_ctx={"amount": tx.get("amount"), "currency": tx.get("currency"),
                             "domain": self.rp_domain})
         except Reject as r:
-            await self._reject(updater, r)
+            await self._reject(updater, r, p.request_digest)
             return
 
         receipt = {
@@ -300,28 +338,30 @@ class SupplierExecutor(AgentExecutor):
             "skill": p.skill,
             "action": action,
             "verified_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "request_digest": p.request_digest,
         }
         if accepted.enforce_result is not None:
             receipt["enforce"] = {"verdict": accepted.enforce_result["verdict"],
                                   "core": accepted.enforce_result["core"],
                                   "core_digest": accepted.enforce_result["core_digest"]}
+        # The receipt records the decision and is in place before the skill runs.
+        # What the skill then does is the task's terminal state, not the receipt.
         await updater.update_status(TaskState.TASK_STATE_WORKING,
                                     metadata={EXTENSION_URI: {"result": receipt}})
-        await updater.add_artifact(parts=[Part(data=_to_value(self._perform(p.skill, tx)))],
+        try:
+            output = self.perform(p.skill, tx)
+        except SkillFailed as exc:
+            await updater.failed(message=updater.new_agent_message(parts=[Part(
+                text=f"{p.skill} failed: {exc.reason}. AAE {accepted.vc['id']} was verified; "
+                     "the failure is the skill's, not the authorization's.")]))
+            return
+        await updater.add_artifact(parts=[Part(data=_to_value(output))],
                                    name="result", last_chunk=True)
         await updater.complete(message=updater.new_agent_message(
             parts=[Part(text=f"{p.skill} done; AAE {accepted.vc['id']} verified.")]))
 
     @staticmethod
-    def _perform(skill: str, tx: dict) -> dict:
-        if skill == "place-order":
-            return {"order_id": "PO-0001", "status": "confirmed",
-                    "amount": tx.get("amount"), "currency": tx.get("currency"),
-                    "items": tx.get("items", [])}
-        return {"quote": {"items": tx.get("items", []), "valid_minutes": 30}}
-
-    @staticmethod
-    async def _reject(updater: TaskUpdater, r: Reject) -> None:
+    async def _reject(updater: TaskUpdater, r: Reject, digest: str | None = None) -> None:
         result = {
             "verdict": "REJECT",
             "draft": AAE_DRAFT,
@@ -329,6 +369,8 @@ class SupplierExecutor(AgentExecutor):
             "step_name": STEP_NAMES.get(r.step, "unknown"),
             "reason_code": r.reason,
         }
+        if digest is not None:
+            result["request_digest"] = digest
         if r.detail:
             result["detail"] = r.detail
         if r.enforce_result is not None:

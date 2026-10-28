@@ -91,9 +91,19 @@ This extension depends on no other extension.
                                                 status.message.metadata[URI] = {challenge}
  SendMessage (same taskId)         ---------->  -02 §5 steps 1-9 (Section 7.4)
    message.metadata[URI] = {challenge_response}
-                                   <----------  Task TASK_STATE_COMPLETED, metadata[URI].result = receipt
-                                           or   Task TASK_STATE_REJECTED, metadata[URI].result = {step, reason_code}
+                                                accepted: the skill runs
+                                   <----------  Task TASK_STATE_COMPLETED or TASK_STATE_FAILED (the skill's outcome),
+                                                  metadata[URI].result = ACCEPT receipt {..., request_digest}
+                                           or   rejected: the skill is never invoked
+                                                Task TASK_STATE_REJECTED,
+                                                  metadata[URI].result = {step, reason_code, request_digest}
 ```
+
+The result records the authorization decision; the task state reports what
+happened. A rejection ends the task before the skill. An acceptance hands the
+request to the skill, and the skill's outcome decides between
+`TASK_STATE_COMPLETED` and `TASK_STATE_FAILED`; the ACCEPT receipt stands in
+both (Section 8.3).
 
 The two-message exchange exists because -02 §5 step 4 requires a relying-party
 nonce. It uses the in-task authorization pattern of A2A §7.6
@@ -375,7 +385,7 @@ Then the server applies issuer acceptance (Section 7.5) to the root of the
 chain. If all of this passes, the presentation is accepted: the server
 transitions the task out of `TASK_STATE_AUTH_REQUIRED`, performs the skill
 with exactly the request part of the presentation message, and reports per
-Section 8.3.
+Section 8.3. If any step fails, the server MUST NOT invoke the skill.
 
 The authorization established this way covers that one request on that one
 task. In the terms of A2A §7.6.4, it MUST NOT be taken to authorize any later
@@ -422,6 +432,7 @@ put the following object as `result` both in
 | `reason_code` | string | Section 8.4. |
 | `detail` | string | OPTIONAL. Diagnostic text; not normative. |
 | `enforce` | object | Present when grant evaluation ran: `{"verdict", "core", "core_digest"}` per -02 §2.5.3. |
+| `request_digest` | string | REQUIRED when the task has a well-formed request part (Section 6.1), which is every rejection except `no_pending_challenge` and `extension_not_activated` without one. Computed per Section 8.5. |
 
 The status message SHOULD also carry a `text` part stating step and reason.
 
@@ -429,7 +440,9 @@ The server reports the step at which the -02 §5 algorithm stopped. It SHOULD
 NOT disclose more than `reason_code` and the step to a client whose subject
 binding has not succeeded (Section 11).
 
-Example:
+Example, for the request part
+`{"skill": "place-order", "transaction": {"amount": 900, "currency": "EUR"}}`
+under an AAE capped at 500 EUR:
 
 ```json
 {
@@ -442,7 +455,8 @@ Example:
       "metadata": {"https://moltrust.ch/extensions/aae/v1": {"result": {
         "verdict": "REJECT", "draft": "draft-kroehl-agentic-trust-aae-02",
         "step": 7, "step_name": "constraints",
-        "reason_code": "max_transaction_value_exceeded"}}}
+        "reason_code": "max_transaction_value_exceeded",
+        "request_digest": "sha256:edf9dc35873b6b0f0c46f8aeead5193a7dc97bcdecc6116ae68899b75e0e86d6"}}}
     }
   }
 }
@@ -450,9 +464,19 @@ Example:
 
 ### 8.3 Acceptance and Receipt
 
-On acceptance the task proceeds (`TASK_STATE_WORKING`, then a terminal state
-of the skill). The server MAY echo a verification receipt as `result` in
-`Task.metadata[URI]`:
+An acceptance is a decision about the request, not a statement about its
+outcome. On acceptance the task proceeds (`TASK_STATE_WORKING`), the server
+performs the skill, and the task ends in the terminal state the skill reaches:
+`TASK_STATE_COMPLETED` when it succeeds, `TASK_STATE_FAILED` when it does not.
+A skill that fails after an acceptance MUST NOT be reported as
+`TASK_STATE_REJECTED`, and a rejection (Section 8.2) MUST NOT be reported as
+`TASK_STATE_FAILED`: the two states answer different questions.
+
+The server MAY put a verification receipt as `result` in `Task.metadata[URI]`.
+A server that does so MUST put it there before it invokes the skill and MUST
+leave it in place whatever terminal state the task reaches, so that a failed
+task still shows that it was authorized. All members are REQUIRED unless marked
+otherwise:
 
 | Member | Type | Meaning |
 | :-- | :-- | :-- |
@@ -464,11 +488,52 @@ of the skill). The server MAY echo a verification receipt as `result` in
 | `subject` | string | `credentialSubject.id`. |
 | `skill`, `action` | string | The gated skill and its mapped action. |
 | `verified_at` | string | RFC 3339 UTC time of the decision. |
-| `enforce` | object | When grants were evaluated: `{"verdict", "core", "core_digest"}` (-02 §2.5.3), so the client or an auditor can recompute the decision. |
+| `request_digest` | string | The request part the decision was made on (Section 8.5). Present in every receipt, whether or not grants were evaluated. |
+| `request_uri` | string | OPTIONAL. An `https` URL from which a party entitled to it can retrieve the request part. It is a retrieval path only: whoever dereferences it MUST recompute `request_digest` over what it retrieved and MUST NOT rely on content that does not match. |
+| `enforce` | object | OPTIONAL; present when grants were evaluated: `{"verdict", "core", "core_digest"}` (-02 §2.5.3), so the client or an auditor can recompute the decision. |
+
+Without grant evaluation, `enforce` is absent, and without `request_digest`
+two receipts under the same AAE and skill would differ only in `verified_at`.
+`request_digest` is what lets an auditor who holds a request show that a
+receipt was issued for it. It identifies content, not an execution: two tasks
+with byte-identical request parts carry the same `request_digest`, and the task
+`id` (A2A §4.1.1) tells the executions apart.
 
 A receipt is a statement by the server. It is not signed by this version of
 the profile; a server MAY additionally sign it, for example as a JWS in an
 artifact.
+
+The paired case, under one AAE capped at 500 EUR:
+
+- A request for 80 EUR passes steps 1-7. The receipt is written, the skill is
+  invoked, and the item is not in stock. The task ends in `TASK_STATE_FAILED`,
+  `Task.metadata[URI].result` is the ACCEPT receipt, and the status message
+  states the skill's failure.
+- A request for 900 EUR fails at step 7. The task ends in
+  `TASK_STATE_REJECTED` with the result of Section 8.2, and the skill is never
+  invoked.
+
+```json
+{
+  "id": "t-7", "contextId": "c-7",
+  "status": {
+    "state": "TASK_STATE_FAILED",
+    "message": {"role": "ROLE_AGENT",
+      "parts": [{"text": "place-order failed: not in catalogue: DESK-02. The AAE was verified."}]}
+  },
+  "metadata": {"https://moltrust.ch/extensions/aae/v1": {"result": {
+    "verdict": "ACCEPT", "draft": "draft-kroehl-agentic-trust-aae-02",
+    "steps_passed": [1, 2, 3, 4, 5, 6, 7],
+    "aae_id": "urn:uuid:6604de88-5d47-49c3-a20b-5f00224c3b5f",
+    "issuer": "did:web:registry.example", "subject": "did:web:buyer.example",
+    "skill": "place-order", "action": "pay",
+    "verified_at": "2026-10-28T15:04:05Z",
+    "request_digest": "sha256:97ff82c176abd81ff1260c0885e3e25c2e651f153c6f4bcb8c6263e77d55198b"}}}
+}
+```
+
+The digest above is that of the request part
+`{"skill": "place-order", "transaction": {"amount": 80, "currency": "EUR", "items": [{"sku": "DESK-02", "qty": 1}]}}`.
 
 ### 8.4 Reason Codes
 
@@ -492,6 +557,40 @@ step.
 A `PENDING` grant verdict (-02 §6.1) means the mandate defers the action to a
 decision not yet made. Version 1 reports it as a rejection (`grant_pending`);
 it does not define how a deferred decision is obtained.
+
+### 8.5 Request Digest
+
+`request_digest` binds a result to the request part it was decided on.
+
+Input: the request part of the presentation message (Section 6.1), the JSON
+object with exactly the members `skill` and `transaction`, as the server froze
+it on receiving the presentation message: after the number mapping of Section
+6.4 and before the skill runs. Nothing else enters the digest: not the AAE, not
+`ancestor_jws`, not the challenge or its nonce, not the task id, not text
+parts. The challenge-response message cannot change the request (Section 6.3),
+so every result on a task reports the same digest.
+
+Computation: serialize the input with the JSON Canonicalization Scheme
+(RFC 8785) to UTF-8 octets, and compute SHA-256 over those octets with no
+prefix and no domain-separation tag. The value is the string `sha256:`
+followed by the 64-character lowercase hexadecimal encoding of the hash, 71
+characters in all, the same form as `core_digest` (-02 §2.5.3).
+
+Verification: a party holding the request part recomputes the value the same
+way and compares the strings. A party holding a different serialization of the
+same JSON gets the same value, because JCS fixes member order, whitespace,
+string escaping and number formatting. A mismatch means the receipt was not
+issued for that request.
+
+The nonce of -02 §5 step 4 is left out on purpose. It binds the challenge
+response to the task (Section 7.3) and is spent with it; it says nothing a
+later auditor of the request needs, and including it would make the digest
+impossible to recompute from the request alone. Telling apart two executions of
+the same request is the task id's job (Section 8.3).
+
+Test vectors with the request part, the exact JCS octets and the expected
+value are in Appendix B and, machine-readable, in
+`tests/vectors/request-digest.json` of the reference implementation.
 
 ## 9. The Agent's Own AAE
 
@@ -521,6 +620,11 @@ different request. A PERMIT under grants is not single-use (-02 §7.1): where
 an action must not be repeated, the server MUST also use `single_use`, an
 idempotency key in the `transaction`, or `Message.messageId` deduplication
 (A2A §3.3.1).
+
+`request_digest` (Section 8.5) is not a replay defence. It is equal for equal
+request parts by construction, so it cannot tell a repeated execution from a
+legitimate second order with the same content; an idempotency key placed in
+the `transaction` is part of the digest input and does tell them apart.
 
 The used-nonce store and the `single_use` store MUST be shared across all
 server instances that can accept the same task or the same AAE (-02 §2.4, §5
@@ -586,7 +690,10 @@ SHOULD present an AAE only to servers within its `allowed_domains` and only for
 gated skills. Rejection results disclose which check failed; the `enforce`
 member discloses transaction values and bounds in the clear (-02 §2.5.2,
 §7.8), and the server MUST treat such results like the transaction itself,
-including retention. Servers SHOULD log the AAE `id`, action, time and outcome
+including retention. `request_digest` hides nothing: a transaction with few
+plausible values (an amount, a currency, a short item list) can be found from
+its digest by trying them, so a result carrying it MUST be treated the same
+way. Servers SHOULD log the AAE `id`, action, time and outcome
 rather than full envelopes (-02 §8). `own_aae` in a public card is published to
 everyone.
 
@@ -610,6 +717,8 @@ vectors of [MoltyCel/aae-conformance-vectors](https://github.com/MoltyCel/aae-co
 - the enforce vectors under `vectors/enforce/` with kernel `enforce_check`,
   built against -02, which fix the verdict and the -02 §2.5.3 core digest for
   grant evaluation.
+
+Its `request_digest` implementation MUST reproduce the values of Appendix B.
 
 The reference implementation in this repository runs both sets in CI. A client
 conforms if it implements Sections 5, 6 and the client checks of 6.3.
@@ -681,5 +790,58 @@ A2A-Extensions: https://moltrust.ch/extensions/aae/v1
      "challenge_response": "<compact JWS over {nonce, aud, iat, aae_id}>"}}}}}
 ```
 
-Result: a `Task` in `TASK_STATE_COMPLETED` with the receipt of Section 8.3 in
-`metadata`, or in `TASK_STATE_REJECTED` with the result of Section 8.2.
+Result, after an acceptance: a `Task` in `TASK_STATE_COMPLETED`, or in
+`TASK_STATE_FAILED` if the skill fails, with the ACCEPT receipt of Section 8.3
+in `metadata` either way. After a rejection: a `Task` in `TASK_STATE_REJECTED`
+with the result of Section 8.2, and no skill invocation. For the request part
+above, `{"skill": "place-order", "transaction": {"amount": 120, "currency":
+"EUR"}}`, both carry the `request_digest` of vector B.4.
+
+## Appendix B. request_digest Test Vectors
+
+Each vector gives the request part, the RFC 8785 serialization that is hashed
+(the exact UTF-8 octets, shown as text), and the value of Section 8.5.
+
+B.1 The request part of the Section 6.1 example.
+
+```
+request part:
+{"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR", "items": [{"sku": "PAPER-A4", "qty": 20}]}}
+JCS octets (UTF-8):
+{"skill":"place-order","transaction":{"amount":120,"currency":"EUR","items":[{"qty":20,"sku":"PAPER-A4"}]}}
+request_digest:
+sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a
+```
+
+B.2 Members out of order, an integral value sent as a double (Section 6.4), a fraction and a non-ASCII string. JCS sorts members by UTF-16 code units and writes 120.0 as 120.
+
+```
+request part:
+{"transaction": {"note": "Bürobedarf", "unit_price": 6.25, "amount": 120.0, "currency": "EUR"}, "skill": "place-order"}
+JCS octets (UTF-8):
+{"skill":"place-order","transaction":{"amount":120,"currency":"EUR","note":"Bürobedarf","unit_price":6.25}}
+request_digest:
+sha256:20673ecb3bc45abe8dd1aa5455aa90397eb769e42f9af1cff56680f4204eb0c1
+```
+
+B.3 Same skill as the first case, a different amount: a different digest.
+
+```
+request part:
+{"skill": "place-order", "transaction": {"amount": 121, "currency": "EUR", "items": [{"sku": "PAPER-A4", "qty": 20}]}}
+JCS octets (UTF-8):
+{"skill":"place-order","transaction":{"amount":121,"currency":"EUR","items":[{"qty":20,"sku":"PAPER-A4"}]}}
+request_digest:
+sha256:fd2490962a20b0d8223d69248ffa5f073180e791864295247ed1eed8661f48f9
+```
+
+B.4 The request part of the Appendix A exchange.
+
+```
+request part:
+{"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}}
+JCS octets (UTF-8):
+{"skill":"place-order","transaction":{"amount":120,"currency":"EUR"}}
+request_digest:
+sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176
+```

@@ -18,6 +18,7 @@ from a2a.utils.errors import A2AError, JSON_RPC_ERROR_CODE_MAP
 from .buyer import BuyerAgent, task_result
 from .challenge import utc_now
 from .constants import EXTENSION_URI
+from .digest import request_digest
 from .jose import sign_compact
 from .server import normalize_numbers, create_supplier_app
 from .testkeys import (buyer_constraints, buyer_mandate, demo_key, demo_resolver, did_of,
@@ -42,7 +43,9 @@ def _start_server(app, port: int) -> uvicorn.Server:
     return server
 
 
-def _show_task(task) -> None:
+def _show_task(task, request: dict | None = None) -> None:
+    """`request` is the {skill, transaction} the buyer sent; with it the
+    receipt's request_digest is recomputed and compared (spec section 8.5)."""
     print(f"   task state : {TaskState.Name(task.status.state)}")
     res = task_result(task)
     if res and res.get("verdict") == "REJECT":
@@ -51,9 +54,18 @@ def _show_task(task) -> None:
     elif res:
         steps = ",".join(str(int(s)) for s in res["steps_passed"])
         print(f"   receipt    : verdict={res['verdict']} steps={steps} aae_id={res['aae_id']}")
+    if res and res.get("request_digest"):
+        line = f"   digest     : {res['request_digest']}"
+        if request is not None:
+            line += (" (recomputed from the request: match)"
+                     if request_digest(request) == res["request_digest"] else " (MISMATCH)")
+        print(line)
+    if res and res.get("verdict") == "ACCEPT":
         for art in task.artifacts:
             data = normalize_numbers(json_format.MessageToDict(art.parts[0].data))
             print(f"   artifact   : {json.dumps(data, sort_keys=True)}")
+    if task.status.state == TaskState.TASK_STATE_FAILED and task.status.message.parts:
+        print(f"   skill      : {task.status.message.parts[0].text}")
 
 
 def _show_error(exc: A2AError) -> None:
@@ -83,11 +95,25 @@ async def run(base_url: str) -> int:
     aae = issue_buyer_aae(now, domains)
     outcomes = []
 
+    def digest_ok(task, tx) -> bool:
+        res = task_result(task) or {}
+        return res.get("request_digest") == request_digest({"skill": "place-order",
+                                                            "transaction": tx})
+
     print("\n(a) place-order 120 EUR, inside the mandate (cap 500 EUR)")
-    task = await buyer.request("place-order", {"amount": 120, "currency": "EUR",
-                                               "items": [{"sku": "PAPER-A4", "qty": 20}]}, aae=aae)
-    _show_task(task)
-    outcomes.append(task.status.state == TaskState.TASK_STATE_COMPLETED)
+    tx = {"amount": 120, "currency": "EUR", "items": [{"sku": "PAPER-A4", "qty": 20}]}
+    task = await buyer.request("place-order", tx, aae=aae)
+    _show_task(task, {"skill": "place-order", "transaction": tx})
+    outcomes.append(task.status.state == TaskState.TASK_STATE_COMPLETED and digest_ok(task, tx))
+
+    print("\n(a2) place-order 80 EUR for an item the supplier does not stock: the AAE check")
+    print("     accepts, the skill fails. The receipt stays; the task state is the skill's.")
+    tx = {"amount": 80, "currency": "EUR", "items": [{"sku": "DESK-02", "qty": 1}]}
+    task = await buyer.request("place-order", tx, aae=aae)
+    _show_task(task, {"skill": "place-order", "transaction": tx})
+    res = task_result(task) or {}
+    outcomes.append(task.status.state == TaskState.TASK_STATE_FAILED
+                    and res.get("verdict") == "ACCEPT" and digest_ok(task, tx))
 
     print("\n(b) place-order 900 EUR, over the max_transaction_value constraint")
     task = await buyer.request("place-order", {"amount": 900, "currency": "EUR",
