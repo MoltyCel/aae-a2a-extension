@@ -1,0 +1,263 @@
+# Cross-Run Guide
+
+A cross-run checks one implementation of the
+[AAE extension for A2A](spec/aae-a2a-extension-v1.md) against another: your
+client against the reference supplier, the reference buyer against your
+server, or both. This guide lists what to build, the cases, the expected
+result of each case, and the form in which to report a run. It is written so
+that you can do all of it without asking us anything.
+
+The reference side of every run is this repository at a commit you name.
+
+## 1. Roles
+
+| Role | You build | Runs against | Who writes the result file |
+| :-- | :-- | :-- | :-- |
+| `server` | A supplier agent (A2A server) that implements spec Sections 4-8 | the reference buyer, `python -m aae_a2a.crossrun client` | the reference buyer |
+| `client` | A buyer agent (A2A client) that implements spec Sections 5, 6 and the checks of 6.3 | the reference supplier, `python -m aae_a2a.crossrun serve` | your client |
+| `both` | Both of the above | each other, with no reference code in the loop | your client |
+
+A `server` run is the cheaper one to report, because the reference buyer runs
+every case and writes the file for you. A `client` run needs your client to
+produce the result file itself (Section 6).
+
+### What a server must offer
+
+- An Agent Card at `/.well-known/agent-card.json` declaring the extension URI
+  `https://moltrust.ch/extensions/aae/v1` with `required: true` and the
+  `params` of spec Section 4: `draft` `draft-kroehl-agentic-trust-aae-02`,
+  `audience` (the URL of your JSON-RPC endpoint), `skills`
+  `{"get-quote": {"action": "read"}, "place-order": {"action": "pay"}}`,
+  `did_methods` `["example"]`, `accepted_issuers` `["did:example:issuer"]`.
+- The JSON-RPC binding of A2A v1.0 (`SendMessage`). The reference buyer uses
+  `a2a-sdk` 1.2.2.
+- DID resolution for the documents in
+  [`tests/vectors/crossrun/did/`](tests/vectors/crossrun/did/), loaded
+  locally. `did:example` is never resolved over the network (spec Section 7.4,
+  -02 Section 5.2).
+- A `place-order` skill that succeeds unless `transaction.items` names a `sku`
+  outside `["PAPER-A4", "TONER-K1"]`, and then fails after the AAE was
+  accepted. This is what produces the paired case (XR-02 against XR-03).
+- A clock within a few minutes of UTC. The reference buyer issues AAEs valid
+  from five minutes ago to one hour ahead.
+
+### What a client must do
+
+- Discover the card, check `draft`, and present an AAE in
+  `metadata[URI].aae` with exactly one data part `{"skill", "transaction"}`
+  (spec 6.1), sending `A2A-Extensions: https://moltrust.ch/extensions/aae/v1`.
+- Answer the challenge of `TASK_STATE_AUTH_REQUIRED` with a JWS over
+  `{nonce, aud, iat, aae_id}` after checking `aud` and `aae_id` (spec 6.3).
+- Read the result from `Task.metadata[URI].result` and recompute
+  `request_digest` from the request part it sent (spec 8.5).
+- Build the AAE variants of Section 3 for the cases it runs.
+
+## 2. Inputs
+
+| Input | Path |
+| :-- | :-- |
+| Profile | [`spec/aae-a2a-extension-v1.md`](spec/aae-a2a-extension-v1.md) |
+| Cases, machine-readable | [`tests/vectors/crossrun/cases.json`](tests/vectors/crossrun/cases.json) |
+| DID documents | [`tests/vectors/crossrun/did/`](tests/vectors/crossrun/did/) |
+| Test keys | [`tests/vectors/crossrun/test-keys.json`](tests/vectors/crossrun/test-keys.json) |
+| `request_digest` vectors | [`tests/vectors/request-digest.json`](tests/vectors/request-digest.json), spec Appendix B |
+| -02 Section 5 vectors | [MoltyCel/aae-conformance-vectors](https://github.com/MoltyCel/aae-conformance-vectors) at `2f117799c604f258e67d5c13d69fea63881bdae0` (spec Section 13) |
+
+The test keys are Ed25519 seeds derived as
+`SHA-256(UTF-8("aae-a2a-extension/testkey/v1/" + name))`. They are public by
+construction and exist only for tests. `issuer` signs AAEs (`assertionMethod`),
+`buyer` is the subject and signs challenge responses (`authentication`),
+`mallory` has a key and no DID document.
+
+A client may use its own DIDs and keys instead. Start the reference supplier
+with `--did-dir <directory of your DID documents>` and
+`--accept-issuer <your issuer DID>`; the expected results stay the same.
+
+## 3. Variants
+
+Each case names an AAE variant and a challenge-response variant. Unless a
+variant says otherwise, the AAE is a VC secured as an EdDSA compact JWS with
+`cty` `aae+json` and `kid` `did:example:issuer#key-1`, issuer
+`did:example:issuer`, subject `did:example:buyer`, and:
+
+- `mandate`: `actions` `["read", "pay"]`, `purpose`, `scope`, `principal_did`
+  as in `aae_a2a/testkeys.py` `buyer_mandate()`;
+- `constraints`: `max_transaction_value` `{"value": 500, "currency": "EUR",
+  "required": true}` and `allowed_domains` `{"value": [<host of
+  params.audience>], "required": true}`;
+- `validity`: `not_before` five minutes ago, `not_after` in one hour,
+  `single_use` `false`; `validFrom` equal to `not_before`.
+
+| AAE variant | Difference from the above |
+| :-- | :-- |
+| `valid` | none |
+| `forged` | the same header, signed with `mallory`'s key |
+| `expired` | `not_before` two hours ago, `not_after` one hour ago |
+| `read_only` | `mandate.actions` `["read"]` |
+| `other_domain` | `allowed_domains` `["other-supplier.example"]` |
+| `none` | no `aae` member; `metadata[URI]` and the message `extensions` are left out |
+
+| Response variant | Meaning |
+| :-- | :-- |
+| `valid` | JWS over the challenge plus `iat` (now), `kid` `did:example:buyer#key-1`, signed with `buyer`'s key |
+| `wrong_key` | the same, signed with `mallory`'s key |
+
+`activate: false` means the presentation is sent without the
+`A2A-Extensions` header.
+
+## 4. Cases and expected results
+
+Every case is one new task with the request part `{"skill": "place-order",
+"transaction": <below>}`, run in the order listed. A `server` run covers all
+cases. A `client` run must cover the `required` ones and may skip the
+`optional` ones.
+
+| Case | Client-side run | AAE / response | `transaction` (skill `place-order`) | Expected | `request_digest` |
+| :-- | :-- | :-- | :-- | :-- | :-- |
+| XR-01 | required | `valid` / `valid` | `{"amount": 120, "currency": "EUR", "items": [{"sku": "PAPER-A4", "qty": 20}]}` | `TASK_STATE_COMPLETED`, `ACCEPT` | `sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a` |
+| XR-02 | required | `valid` / `valid` | `{"amount": 80, "currency": "EUR", "items": [{"sku": "DESK-02", "qty": 1}]}` | `TASK_STATE_FAILED`, `ACCEPT` | `sha256:97ff82c176abd81ff1260c0885e3e25c2e651f153c6f4bcb8c6263e77d55198b` |
+| XR-03 | required | `valid` / `valid` | `{"amount": 900, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 7, `max_transaction_value_exceeded` | `sha256:edf9dc35873b6b0f0c46f8aeead5193a7dc97bcdecc6116ae68899b75e0e86d6` |
+| XR-04 | required | `valid` / `valid` | `{"note": "Bürobedarf", "unit_price": 6.25, "amount": 120.0, "currency": "EUR"}` | `TASK_STATE_COMPLETED`, `ACCEPT` | `sha256:20673ecb3bc45abe8dd1aa5455aa90397eb769e42f9af1cff56680f4204eb0c1` |
+| XR-05 | required | `valid` / `valid` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_COMPLETED`, `ACCEPT` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+| XR-06 | required | `valid` / `valid` | `{"amount": 120, "currency": "EUR", "items": [{"sku": "PAPER-A4", "qty": 20}]}` | `TASK_STATE_COMPLETED`, `ACCEPT`, task id differs from XR-01's | `sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a` |
+| XR-07 | optional | `forged` / `valid` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 1, `invalid_signature` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+| XR-08 | optional | `expired` / `valid` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 3, `expired_not_after` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+| XR-09 | optional | `valid` / `wrong_key` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 4, `challenge_signature_invalid` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+| XR-10 | optional | `read_only` / `valid` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 6, `action_not_in_mandate` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+| XR-11 | optional | `other_domain` / `valid` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 7, `domain_not_in_allowlist` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+| XR-12 | optional | `valid` / `valid`, not activated | `{"amount": 120, "currency": "EUR"}` | JSON-RPC error `-32008`, no task | none |
+| XR-13 | optional | `none` / `valid` | `{"amount": 120, "currency": "EUR"}` | JSON-RPC error `-32602`, `reason_code` `aae_missing`, no task | none |
+
+The `request_digest` column is the value of spec Section 8.5 for that request
+part; the result of a rejection carries it as well (spec 8.2). XR-04 uses the
+member order, `120.0` and non-ASCII string of vector B.2, so it fails if
+either side hashes something other than the JCS form of the request part.
+
+## 5. Running
+
+Install once (Python 3.12): `make install`, or
+`python -m pip install --require-hashes --no-deps -r requirements.txt`.
+
+**Reference against reference** (what CI does, and the baseline for your
+run):
+
+```
+scripts/crossrun-local.sh            # or: make crossrun
+```
+
+This starts the reference supplier and the reference buyer as two processes on
+`127.0.0.1`, runs all cases, writes `.crossrun/local.json`, validates it, and
+logs every decision the supplier made to `.crossrun/supplier-decisions.jsonl`.
+
+**Role `server`** — the reference buyer against your supplier:
+
+```
+.venv/bin/python -m aae_a2a.crossrun client \
+  --url https://your-supplier.example \
+  --out crossruns/2026-11-02-yourname-server.json \
+  --participant "Your Name" --participant-url https://github.com/you \
+  --server-impl "your-supplier" --server-repo https://github.com/you/your-supplier \
+  --server-commit <40-character SHA of your server>
+```
+
+`--url` is the base URL under which your Agent Card is served. The exit status
+is non-zero if any case fails.
+
+**Role `client`** — your buyer against the reference supplier:
+
+```
+.venv/bin/python -m aae_a2a.crossrun serve --port 8790 \
+  --record crossruns/2026-11-02-yourname-client.decisions.jsonl
+```
+
+Point your client at `http://127.0.0.1:8790`. `--public-url` sets the
+audience if the supplier is reached under another URL. The decision log has
+one line per task with `task_id`, `task_state`, `verdict`, `step`,
+`reason_code` and `request_digest`, so both sides of the run can be compared
+line by line.
+
+**Role `both`**: run your client against your server and write the result file
+as in Section 6. Name the commits of both sides.
+
+## 6. Result file
+
+One JSON file per run, format `aae-a2a-crossrun/1`. See
+[`crossruns/TEMPLATE.json`](crossruns/TEMPLATE.json).
+
+| Member | Content |
+| :-- | :-- |
+| `format` | `"aae-a2a-crossrun/1"` |
+| `profile`, `draft` | the extension URI and `draft-kroehl-agentic-trust-aae-02` |
+| `cases_sha256` | `sha256:` and the SHA-256 of `cases.json` as run, so a later change of the cases is visible |
+| `run_at` | RFC 3339 UTC |
+| `participant` | `name` to credit, optional `url` |
+| `client`, `server` | `implementation`, `repository`, `commit` (40-character SHA), `dirty: true` if the working tree differed from that commit; `server.agent_card` |
+| `cases` | one entry per case, in order (below) |
+| `summary` | `{"pass", "fail", "skipped"}` counts |
+
+Each entry in `cases`:
+
+| Member | When | Content |
+| :-- | :-- | :-- |
+| `id` | always | case id |
+| `result` | always | `pass`, `fail` or `skipped` |
+| `task_id`, `task_state` | a task was returned | as returned |
+| `verdict` | a task was returned | `result.verdict`, `ACCEPT` or `REJECT` |
+| `request_digest` | a task was returned | `result.request_digest`, as returned (not recomputed) |
+| `steps_passed` | `ACCEPT` | integers |
+| `step`, `reason_code` | `REJECT` | as returned |
+| `jsonrpc_code`, `reason_code` | JSON-RPC error | the error code and `ErrorInfo.metadata.reason_code` if present |
+| `notes` | optional | free text, for example a differing `reason_code` |
+
+A case passes when `task_state`, `verdict`, `request_digest` and, for a
+rejection, `step` equal the expected values, an accepted case has
+`steps_passed` containing 1 to 7, and XR-06's task id differs from XR-01's.
+For an error case, `jsonrpc_code` decides. A different `reason_code` is a note,
+not a failure: spec 8.4 lets a server use codes it does not list.
+
+Validate before reporting:
+
+```
+.venv/bin/python -m aae_a2a.crossrun check crossruns/2026-11-02-yourname-server.json
+```
+
+`check` recomputes `pass` or `fail` from what each entry records, so a file
+cannot claim a pass its own observations do not support. It also requires
+commit SHAs for both sides and every `required` case.
+
+## 7. Reporting a run
+
+1. Publish the result file in your own repository if you can; that is your
+   record of the run.
+2. Open a pull request against this repository that adds the file under
+   [`crossruns/`](crossruns/) as `<YYYY-MM-DD>-<participant>-<role>.json` and
+   one row in the credit table of [`crossruns/README.md`](crossruns/README.md).
+   CI runs `check` on every file there. If you would rather not open a pull
+   request, open an issue with the file attached or linked.
+3. A failing case is worth reporting. Say in the pull request which side you
+   think is wrong; if it is the reference, that is a bug here.
+
+Runs are credited with the participant's name and the commits of both sides.
+
+## 8. Effort
+
+Estimates for one person who knows A2A and JOSE; they assume the -02 Section 5
+verifier, or the signing side for a client, already exists.
+
+| Role | Effort |
+| :-- | :-- |
+| `server`, with an A2A server and a -02 Section 5 verifier in hand | 2 to 4 hours: card params, fixture DID documents, the `place-order` rule, result and `request_digest` reporting, one run |
+| `client`, required cases XR-01 to XR-06 | 2 to 3 hours: presentation, challenge response, reading the result, writing the result file |
+| `client`, optional cases XR-07 to XR-13 as well | about 1 hour more for the AAE and response variants |
+| `both` | the two rows added, about one working day |
+
+A -02 Section 5 verifier written from scratch is outside these figures; the
+[conformance vectors](https://github.com/MoltyCel/aae-conformance-vectors) are
+the place to start one.
+
+## 9. Not covered by this case set
+
+Delegation chains (step 9) and grant evaluation (step 6 with `grants`) are in
+the reference tests (`tests/test_flow.py`) and the conformance vectors, not in
+this case set. There is no hosted reference endpoint; every run is local or
+against an endpoint the participant operates.

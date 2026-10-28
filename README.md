@@ -47,6 +47,14 @@ request it sent (spec Section 8.5, vectors in `tests/vectors/`).
 Without `make`: `python -m pip install --require-hashes --no-deps -r requirements.txt`,
 then `python -m aae_a2a.demo`.
 
+## Cross-runs
+
+[CROSSRUN.md](CROSSRUN.md) is the guide for running another implementation
+against this one: roles, cases with expected results, and the result-file
+format. `scripts/crossrun-local.sh` (or `make crossrun`) runs the reference
+supplier and buyer as two processes against each other; reported runs and
+their credit are in [crossruns/](crossruns/).
+
 ## Tests
 
 ```
@@ -65,6 +73,9 @@ make vectors    # also run the verifier against MoltyCel/aae-conformance-vectors
 | `aae_a2a/server.py` | Supplier agent: Agent Card, request handler, executor. |
 | `aae_a2a/buyer.py` | Buyer agent: discovery, presentation, challenge response. |
 | `aae_a2a/testkeys.py` | Deterministic test keys and `did:example` documents. |
+| `aae_a2a/crossrun.py` | Cross-run harness: `serve`, `client`, `check`, `fixtures`. |
+| `tests/vectors/crossrun/` | Cross-run cases, DID documents and test keys. |
+| `crossruns/` | Reported cross-run results and credit. |
 | `upstream/` | Draft text for a proposal issue in `a2aproject/A2A`. |
 
 ## Keys

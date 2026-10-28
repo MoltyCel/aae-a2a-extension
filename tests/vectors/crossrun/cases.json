@@ -1,0 +1,137 @@
+{
+  "format": "aae-a2a-crossrun-cases/1",
+  "profile": "https://moltrust.ch/extensions/aae/v1",
+  "draft": "draft-kroehl-agentic-trust-aae-02",
+  "description": "Cross-run cases for the AAE A2A extension profile v1. Each case is one SendMessage exchange: a request part, the AAE variant presented, the challenge-response variant and whether the extension is activated. CROSSRUN.md defines the variants and how a result is reported.",
+  "supplier": {
+    "skills": {"get-quote": {"action": "read"}, "place-order": {"action": "pay"}},
+    "accepted_issuers": ["did:example:issuer"],
+    "did_methods": ["example"],
+    "catalogue": ["PAPER-A4", "TONER-K1"],
+    "skill_rule": "place-order succeeds unless transaction.items names a sku outside the catalogue; it then fails after the AAE was accepted."
+  },
+  "cases": [
+    {
+      "id": "XR-01",
+      "title": "Order inside the mandate (request part of spec 6.1)",
+      "client_side": "required",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR", "items": [{"sku": "PAPER-A4", "qty": 20}]}},
+      "aae": "valid", "challenge_response": "valid", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_COMPLETED", "verdict": "ACCEPT",
+                 "request_digest": "sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a"}
+    },
+    {
+      "id": "XR-02",
+      "title": "Paired case, accepted: the skill fails after the AAE check (spec 8.3)",
+      "client_side": "required",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 80, "currency": "EUR", "items": [{"sku": "DESK-02", "qty": 1}]}},
+      "aae": "valid", "challenge_response": "valid", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_FAILED", "verdict": "ACCEPT",
+                 "request_digest": "sha256:97ff82c176abd81ff1260c0885e3e25c2e651f153c6f4bcb8c6263e77d55198b"}
+    },
+    {
+      "id": "XR-03",
+      "title": "Paired case, rejected: over the 500 EUR cap (spec 8.2)",
+      "client_side": "required",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 900, "currency": "EUR"}},
+      "aae": "valid", "challenge_response": "valid", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_REJECTED", "verdict": "REJECT",
+                 "step": 7, "reason_code": "max_transaction_value_exceeded",
+                 "request_digest": "sha256:edf9dc35873b6b0f0c46f8aeead5193a7dc97bcdecc6116ae68899b75e0e86d6"}
+    },
+    {
+      "id": "XR-04",
+      "title": "request_digest canonicalization: member order, 120.0, a fraction, non-ASCII (vector B.2)",
+      "client_side": "required",
+      "request_part": {"transaction": {"note": "Bürobedarf", "unit_price": 6.25, "amount": 120.0, "currency": "EUR"}, "skill": "place-order"},
+      "aae": "valid", "challenge_response": "valid", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_COMPLETED", "verdict": "ACCEPT",
+                 "request_digest": "sha256:20673ecb3bc45abe8dd1aa5455aa90397eb769e42f9af1cff56680f4204eb0c1"}
+    },
+    {
+      "id": "XR-05",
+      "title": "Request part of Appendix A (vector B.4)",
+      "client_side": "required",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "valid", "challenge_response": "valid", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_COMPLETED", "verdict": "ACCEPT",
+                 "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"}
+    },
+    {
+      "id": "XR-06",
+      "title": "Same request as XR-01 again: same request_digest, different task id (spec 8.3)",
+      "client_side": "required",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR", "items": [{"sku": "PAPER-A4", "qty": 20}]}},
+      "aae": "valid", "challenge_response": "valid", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_COMPLETED", "verdict": "ACCEPT",
+                 "request_digest": "sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a",
+                 "task_id_differs_from": "XR-01"}
+    },
+    {
+      "id": "XR-07",
+      "title": "Forged AAE: issuer kid, signed with another key",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "forged", "challenge_response": "valid", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_REJECTED", "verdict": "REJECT",
+                 "step": 1, "reason_code": "invalid_signature",
+                 "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"}
+    },
+    {
+      "id": "XR-08",
+      "title": "Expired AAE",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "expired", "challenge_response": "valid", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_REJECTED", "verdict": "REJECT",
+                 "step": 3, "reason_code": "expired_not_after",
+                 "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"}
+    },
+    {
+      "id": "XR-09",
+      "title": "Challenge response signed with a key that is not the subject's",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "valid", "challenge_response": "wrong_key", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_REJECTED", "verdict": "REJECT",
+                 "step": 4, "reason_code": "challenge_signature_invalid",
+                 "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"}
+    },
+    {
+      "id": "XR-10",
+      "title": "Mandate without the pay action",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "read_only", "challenge_response": "valid", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_REJECTED", "verdict": "REJECT",
+                 "step": 6, "reason_code": "action_not_in_mandate",
+                 "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"}
+    },
+    {
+      "id": "XR-11",
+      "title": "allowed_domains does not name the server's audience host",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "other_domain", "challenge_response": "valid", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_REJECTED", "verdict": "REJECT",
+                 "step": 7, "reason_code": "domain_not_in_allowlist",
+                 "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"}
+    },
+    {
+      "id": "XR-12",
+      "title": "Extension not activated, card says required",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "valid", "challenge_response": "valid", "activate": false,
+      "expect": {"kind": "error", "jsonrpc_code": -32008}
+    },
+    {
+      "id": "XR-13",
+      "title": "Extension activated, AAE missing",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "none", "challenge_response": "valid", "activate": true,
+      "expect": {"kind": "error", "jsonrpc_code": -32602, "reason_code": "aae_missing"}
+    }
+  ]
+}

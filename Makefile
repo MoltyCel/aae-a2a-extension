@@ -3,7 +3,7 @@ VENV   ?= .venv
 PY      = $(VENV)/bin/python
 VECTORS_COMMIT = 2f117799c604f258e67d5c13d69fea63881bdae0
 
-.PHONY: install demo test vectors clean
+.PHONY: install demo test vectors crossrun clean
 
 $(PY):
 	$(PYTHON) -m venv $(VENV)
@@ -17,6 +17,10 @@ demo: $(PY)
 test: $(PY)
 	$(PY) -m pytest -q
 
+# Reference supplier and buyer as two processes, all cross-run cases (CROSSRUN.md).
+crossrun: $(PY)
+	VENV=$(VENV) scripts/crossrun-local.sh
+
 # Run the section 5 verifier against MoltyCel/aae-conformance-vectors as well.
 vectors: $(PY)
 	@test -d .vectors || (git init -q .vectors && \
@@ -25,4 +29,4 @@ vectors: $(PY)
 	AAE_VECTORS_DIR=$(CURDIR)/.vectors $(PY) -m pytest -q
 
 clean:
-	rm -rf $(VENV) .vectors .pytest_cache
+	rm -rf $(VENV) .vectors .pytest_cache .crossrun
