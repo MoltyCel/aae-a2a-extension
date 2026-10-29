@@ -233,6 +233,9 @@ class SupplierExecutor(AgentExecutor):
     binding: SubjectBinding
     clock: callable = utc_now
     perform: callable = perform_skill
+    # Called as observer(task_id, result, task_state_name) for every decision;
+    # the cross-run server uses it to log what it decided (CROSSRUN.md).
+    observer: callable = None
     pending: dict[str, _Pending] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -351,17 +354,22 @@ class SupplierExecutor(AgentExecutor):
         try:
             output = self.perform(p.skill, tx)
         except SkillFailed as exc:
+            self._observe(updater, receipt, TaskState.TASK_STATE_FAILED)
             await updater.failed(message=updater.new_agent_message(parts=[Part(
                 text=f"{p.skill} failed: {exc.reason}. AAE {accepted.vc['id']} was verified; "
                      "the failure is the skill's, not the authorization's.")]))
             return
         await updater.add_artifact(parts=[Part(data=_to_value(output))],
                                    name="result", last_chunk=True)
+        self._observe(updater, receipt, TaskState.TASK_STATE_COMPLETED)
         await updater.complete(message=updater.new_agent_message(
             parts=[Part(text=f"{p.skill} done; AAE {accepted.vc['id']} verified.")]))
 
-    @staticmethod
-    async def _reject(updater: TaskUpdater, r: Reject, digest: str | None = None) -> None:
+    def _observe(self, updater: TaskUpdater, result: dict, state: int) -> None:
+        if self.observer is not None:
+            self.observer(updater.task_id, result, TaskState.Name(state))
+
+    async def _reject(self, updater: TaskUpdater, r: Reject, digest: str | None = None) -> None:
         result = {
             "verdict": "REJECT",
             "draft": AAE_DRAFT,
@@ -381,6 +389,7 @@ class SupplierExecutor(AgentExecutor):
         msg = updater.new_agent_message(parts=[Part(text=text)])
         msg.metadata.update({EXTENSION_URI: {"result": result}})
         msg.extensions.append(EXTENSION_URI)
+        self._observe(updater, result, TaskState.TASK_STATE_REJECTED)
         await updater.update_status(TaskState.TASK_STATE_REJECTED, message=msg,
                                     metadata={EXTENSION_URI: {"result": result}})
 

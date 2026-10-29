@@ -36,3 +36,10 @@ jobs:
         run: python -m pytest -q
       - name: Demo
         run: python -m aae_a2a.demo
+      - name: Cross-run, reference against reference
+        run: VENV="$(dirname "$(dirname "$(command -v python)")")" scripts/crossrun-local.sh
+      - name: Reported cross-runs
+        run: |
+          shopt -s nullglob
+          files=(); for f in crossruns/*.json; do [ "$(basename "$f")" = TEMPLATE.json ] || files+=("$f"); done
+          if [ ${#files[@]} -gt 0 ]; then python -m aae_a2a.crossrun check "${files[@]}"; else echo "no reported runs yet"; fi

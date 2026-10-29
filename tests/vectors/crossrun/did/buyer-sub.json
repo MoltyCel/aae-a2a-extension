@@ -1,0 +1,21 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1"
+  ],
+  "id": "did:example:buyer-sub",
+  "verificationMethod": [
+    {
+      "id": "did:example:buyer-sub#key-1",
+      "type": "JsonWebKey",
+      "controller": "did:example:buyer-sub",
+      "publicKeyJwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "ey7sABbTTFk8p4bdIH4HZ4D5i5FFsXC1mwCSdFo5ZIE"
+      }
+    }
+  ],
+  "authentication": [
+    "did:example:buyer-sub#key-1"
+  ]
+}

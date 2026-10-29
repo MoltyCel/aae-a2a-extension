@@ -1,0 +1,34 @@
+{
+  "format": "aae-a2a-crossrun/1",
+  "profile": "https://moltrust.ch/extensions/aae/v1",
+  "draft": "draft-kroehl-agentic-trust-aae-02",
+  "cases_sha256": "sha256:<SHA-256 of tests/vectors/crossrun/cases.json at the reference commit>",
+  "run_at": "<RFC 3339 UTC time of the run>",
+  "participant": {
+    "name": "<name to credit>",
+    "url": "<optional: your project or profile URL>"
+  },
+  "client": {
+    "implementation": "<name of the client side>",
+    "repository": "<repository URL>",
+    "commit": "<40-character commit SHA of the client side>",
+    "dirty": false
+  },
+  "server": {
+    "implementation": "<name of the server side>",
+    "repository": "<repository URL>",
+    "commit": "<40-character commit SHA of the server side>",
+    "dirty": false,
+    "agent_card": "<URL of the Agent Card the client discovered>"
+  },
+  "cases": [
+    {"id": "XR-01", "result": "pass", "task_id": "<task id>", "task_state": "TASK_STATE_COMPLETED",
+     "verdict": "ACCEPT", "request_digest": "sha256:<64 hex>", "steps_passed": [1, 2, 3, 4, 5, 6, 7]},
+    {"id": "XR-03", "result": "pass", "task_id": "<task id>", "task_state": "TASK_STATE_REJECTED",
+     "verdict": "REJECT", "request_digest": "sha256:<64 hex>", "step": 7,
+     "reason_code": "max_transaction_value_exceeded"},
+    {"id": "XR-12", "result": "pass", "jsonrpc_code": -32008},
+    {"id": "XR-07", "result": "skipped"}
+  ],
+  "summary": {"pass": 0, "fail": 0, "skipped": 0}
+}
