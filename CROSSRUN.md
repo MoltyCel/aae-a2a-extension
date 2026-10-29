@@ -239,23 +239,7 @@ commit SHAs for both sides and every `required` case.
 
 Runs are credited with the participant's name and the commits of both sides.
 
-## 8. Effort
-
-Estimates for one person who knows A2A and JOSE; they assume the -02 Section 5
-verifier, or the signing side for a client, already exists.
-
-| Role | Effort |
-| :-- | :-- |
-| `server`, with an A2A server and a -02 Section 5 verifier in hand | 2 to 4 hours: card params, fixture DID documents, the `place-order` rule, result and `request_digest` reporting, one run |
-| `client`, required cases XR-01 to XR-06 | 2 to 3 hours: presentation, challenge response, reading the result, writing the result file |
-| `client`, optional cases XR-07 to XR-13 as well | about 1 hour more for the AAE and response variants |
-| `both` | the two rows added, about one working day |
-
-A -02 Section 5 verifier written from scratch is outside these figures; the
-[conformance vectors](https://github.com/MoltyCel/aae-conformance-vectors) are
-the place to start one.
-
-## 9. Not covered by this case set
+## 8. Not covered by this case set
 
 Delegation chains (step 9) and grant evaluation (step 6 with `grants`) are in
 the reference tests (`tests/test_flow.py`) and the conformance vectors, not in
