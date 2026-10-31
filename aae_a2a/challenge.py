@@ -55,8 +55,12 @@ class UsedNonceStore:
 
 class SubjectBinding:
     def __init__(self, resolver: LocalDidResolver, master_key: bytes | None = None,
-                 lifetime_s: int = 300, skew_s: int = 60):
+                 lifetime_s: int = 300, skew_s: int = 60, random_source=None):
         master = master_key if master_key is not None else os.urandom(32)
+        # random_source(aae_id) -> lowercase hex of at least 32 digits. Only the
+        # pinned bundle replaces os.urandom, so that its challenge responses are
+        # fixed bytes (aae_a2a/pinned.py); never in a deployment.
+        self._random = random_source or (lambda _aae_id: os.urandom(16).hex())
         self._key = hmac.new(master, _KEY_LABEL, hashlib.sha256).digest()
         self._resolver = resolver
         self.lifetime_s = lifetime_s
@@ -69,7 +73,7 @@ class SubjectBinding:
 
     def mint(self, aud: str, aae_id: str, now: datetime) -> str:
         """nonce = <random> "." <expiry> "." <authenticator> (AAE -02 section 5, step 4)."""
-        rnd = os.urandom(16).hex()
+        rnd = self._random(aae_id)
         expiry = str(int(now.timestamp()) + self.lifetime_s)
         return f"{rnd}.{expiry}.{self._auth(rnd, expiry, aud, aae_id)}"
 

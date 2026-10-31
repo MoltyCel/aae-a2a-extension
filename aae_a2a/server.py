@@ -433,9 +433,12 @@ class ActivatedExtensionsHeader:
 def create_supplier_app(base_url: str, *, resolver: LocalDidResolver,
                         accepted_issuers: list[str] | None, own_aae: str | None = None,
                         clock=utc_now, verifier: AaeVerifier | None = None,
-                        required: bool = True) -> tuple[Starlette, AgentCard, SupplierExecutor]:
+                        required: bool = True, binding: SubjectBinding | None = None,
+                        audience: str | None = None) -> tuple[Starlette, AgentCard, SupplierExecutor]:
     cfg = ProfileConfig(
-        audience=base_url.rstrip("/") + RPC_PATH,
+        # audience is the endpoint URL unless fixed otherwise (the pinned bundle
+        # names one audience wherever the supplier actually listens).
+        audience=audience or base_url.rstrip("/") + RPC_PATH,
         skills={"get-quote": {"action": "read"}, "place-order": {"action": "pay"}},
         accepted_issuers=accepted_issuers,
         did_methods=["example"],
@@ -447,7 +450,7 @@ def create_supplier_app(base_url: str, *, resolver: LocalDidResolver,
     executor = SupplierExecutor(
         cfg=cfg,
         verifier=verifier or AaeVerifier(resolver, accepted_issuers=accepted_issuers),
-        binding=SubjectBinding(resolver),
+        binding=binding or SubjectBinding(resolver),
         clock=clock,
     )
     handler = AaeRequestHandler(agent_executor=executor, task_store=InMemoryTaskStore(),

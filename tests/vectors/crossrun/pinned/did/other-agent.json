@@ -1,0 +1,21 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1"
+  ],
+  "id": "did:example:other-agent",
+  "verificationMethod": [
+    {
+      "id": "did:example:other-agent#key-1",
+      "type": "JsonWebKey",
+      "controller": "did:example:other-agent",
+      "publicKeyJwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "xDvhvvaSIpZAMY1War2a5-JxnV-I0YoNzNXorVI8d0s"
+      }
+    }
+  ],
+  "authentication": [
+    "did:example:other-agent#key-1"
+  ]
+}

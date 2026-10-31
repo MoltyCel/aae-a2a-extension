@@ -76,6 +76,8 @@ def build_aae(variant: str, audience: str) -> str | None:
         return None
     if variant == "valid":
         return issue_buyer_aae(now, domains)
+    if variant == "single_use":
+        return issue_buyer_aae(now, domains, single_use=True)
     if variant == "expired":
         return issue_buyer_aae(now, domains, not_before=now - timedelta(hours=2),
                                not_after=now - timedelta(hours=1))
@@ -146,6 +148,20 @@ def evaluate(case: dict, obs: dict, task_ids: dict[str, str]) -> tuple[str, list
     use codes not listed in spec 8.4, and a client treats them as a rejection
     at the stated step."""
     exp, fails, notes = case["expect"], [], []
+    if exp["kind"] == "retry":
+        # One envelope, several presentations, each a task of its own.
+        got = obs.get("attempts") or []
+        if len(got) != len(exp["attempts"]):
+            return "fail", [f"{len(got)} attempts reported, {len(exp['attempts'])} expected"]
+        ids = [o.get("task_id") for o in got]
+        if len(set(ids)) != len(ids) or None in ids:
+            fails.append("the attempts are not distinct tasks")
+        for n, (e, o) in enumerate(zip(exp["attempts"], got), start=1):
+            _, msgs = evaluate({**case, "expect": e}, o, task_ids)
+            sub_fails = [m for m in msgs if not m.startswith("reason_code")]
+            fails += [f"attempt {n}: {m}" for m in sub_fails]
+            notes += [f"attempt {n}: {m}" for m in msgs if m.startswith("reason_code")]
+        return ("fail" if fails else "pass"), fails + notes
     if exp["kind"] == "error":
         if obs.get("jsonrpc_code") != exp["jsonrpc_code"]:
             fails.append(f"jsonrpc_code {obs.get('jsonrpc_code')} != {exp['jsonrpc_code']}")
@@ -163,6 +179,12 @@ def evaluate(case: dict, obs: dict, task_ids: dict[str, str]) -> tuple[str, list
             fails.append(f"steps_passed {steps} lacks one of 1-7")
     if "reason_code" in exp and obs.get("reason_code") != exp["reason_code"]:
         notes.append(f"reason_code {obs.get('reason_code')} != {exp['reason_code']}")
+    # Admission is step 5 against what the server has already accepted. A server
+    # reports it through the verdict; authorization (every step but 5) is not
+    # observable from a rejection at step 5 and is checked on the pinned bundle.
+    adm = exp.get("admission")
+    if adm is not None and (obs.get("verdict") == "ACCEPT") != adm["admitted"]:
+        fails.append(f"admitted {obs.get('verdict') == 'ACCEPT'} != {adm['admitted']}")
     other = exp.get("task_id_differs_from")
     if other is not None:
         if not obs.get("task_id") or obs.get("task_id") == task_ids.get(other):
@@ -204,14 +226,21 @@ async def run_cases(base_url: str, cases: list[dict], only: set[str] | None = No
                 continue
             rp = case["request_part"]
             respond = RESPONSES[case["challenge_response"]]
-            try:
-                task = await buyer.request(rp["skill"], rp["transaction"],
-                                           aae=build_aae(case["aae"], audience),
-                                           activate=case["activate"], respond=respond)
-                obs = observe_task(task)
-                task_ids[case["id"]] = task.id
-            except A2AError as exc:
-                obs = observe_error(exc)
+            aae = build_aae(case["aae"], audience)
+            attempts = []
+            for _ in range(case.get("attempts", 1)):
+                try:
+                    task = await buyer.request(rp["skill"], rp["transaction"], aae=aae,
+                                               activate=case["activate"], respond=respond)
+                    attempts.append(observe_task(task))
+                except A2AError as exc:
+                    attempts.append(observe_error(exc))
+            if "attempts" in case:
+                obs = {"attempts": attempts}
+            else:
+                obs = attempts[0]
+                if obs.get("task_id"):
+                    task_ids[case["id"]] = obs["task_id"]
             result, notes = evaluate(case, obs, task_ids)
             out.append({"id": case["id"], "result": result, **obs,
                         **({"notes": notes} if notes else {})})
@@ -224,7 +253,68 @@ def summarize(results: list[dict]) -> dict:
     return {k: sum(1 for r in results if r["result"] == k) for k in ("pass", "fail", "skipped")}
 
 
+async def run_pinned(base_url: str, bundle_dir: Path, httpx_client=None) -> list[dict]:
+    """Present the pinned bytes to a supplier started with --pinned and compare
+    each attempt with what the bundle expects (CROSSRUN.md, "Pinned bundle")."""
+    from . import pinned
+    bundle = pinned.load(bundle_dir)
+    buyer = BuyerAgent(base_url, httpx_client=httpx_client)
+    await buyer.discover()
+    out, task_ids = [], {}
+    try:
+        for case in bundle["cases"]:
+            rp, aae = case["request_part"], pinned.read_jws(bundle_dir, case["aae"])
+            got = []
+            for att in case["attempts"]:
+                def respond(challenge, _aae_id, att=att):
+                    if challenge != att["challenge"]:
+                        raise RuntimeError(f"{case['id']} attempt {att['attempt']}: the supplier "
+                                           f"minted another challenge; start it with --pinned")
+                    return pinned.read_jws(bundle_dir, att["challenge_response"])
+                try:
+                    got.append(observe_task(await buyer.request(
+                        rp["skill"], rp["transaction"], aae=aae, respond=respond)))
+                except A2AError as exc:
+                    got.append(observe_error(exc))
+            exp = [att["expect"] for att in case["attempts"]]
+            if len(exp) == 1:
+                result, notes = evaluate({"id": case["id"], "expect": exp[0]}, got[0], task_ids)
+                entry = {"id": case["id"], "result": result, **got[0]}
+                task_ids[case["id"]] = got[0].get("task_id")
+            else:
+                result, notes = evaluate({"id": case["id"],
+                                          "expect": {"kind": "retry", "attempts": exp}},
+                                         {"attempts": got}, task_ids)
+                entry = {"id": case["id"], "result": result, "attempts": got}
+            out.append({**entry, **({"notes": notes} if notes else {})})
+    finally:
+        await buyer.aclose()
+    return out
+
+
+def _print_results(results: list[dict]) -> None:
+    for r in results:
+        line = f"{r['id']}  {r['result']:<7}"
+        for o in (r["attempts"] if "attempts" in r else [r]) if r["result"] != "skipped" else []:
+            line += f" {o.get('task_state') or 'error ' + str(o.get('jsonrpc_code'))}"
+            if o.get("step") is not None:
+                line += f" step {o['step']} {o.get('reason_code')}"
+            if o.get("request_digest"):
+                line += f" {o['request_digest'][:19]}..."
+        for n in r.get("notes", []):
+            line += f"\n        {n}"
+        print(line)
+
+
 def cmd_client(a) -> int:
+    if a.pinned:
+        results = asyncio.run(run_pinned(a.url, Path(a.pinned)))
+        _print_results(results)
+        s = summarize(results)
+        print(f"\npinned bundle: {s['pass']} pass, {s['fail']} fail")
+        return 1 if s["fail"] else 0
+    if not a.out:
+        raise SystemExit("--out is required unless --pinned is given")
     spec, cases_digest = load_cases()
     only = set(a.cases.split(",")) if a.cases else None
     results = asyncio.run(run_cases(a.url, spec["cases"], only))
@@ -249,17 +339,7 @@ def cmd_client(a) -> int:
     }
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     Path(a.out).write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    for r in results:
-        line = f"{r['id']}  {r['result']:<7}"
-        if r["result"] != "skipped":
-            line += f" {r.get('task_state') or 'error ' + str(r.get('jsonrpc_code'))}"
-            if r.get("step") is not None:
-                line += f" step {r['step']} {r.get('reason_code')}"
-            if r.get("request_digest"):
-                line += f" {r['request_digest'][:19]}..."
-        for n in r.get("notes", []):
-            line += f"\n        {n}"
-        print(line)
+    _print_results(results)
     s = doc["summary"]
     print(f"\n{s['pass']} pass, {s['fail']} fail, {s['skipped']} skipped -> {a.out}")
     return 1 if s["fail"] else 0
@@ -373,16 +453,32 @@ def cmd_serve(a) -> int:
     from .didres import LocalDidResolver
     from .server import create_supplier_app
 
+    from datetime import datetime
     docs = list(fixture_documents().values())
+    clock, binding, audience = utc_now, None, None
+    if a.pinned:
+        from . import pinned
+        bundle = pinned.load(Path(a.pinned))
+        at = a.at or bundle["verify_at"]
+        audience = bundle["params"]["audience"]
+    else:
+        at = a.at
+    if at:
+        frozen = datetime.fromisoformat(at.replace("Z", "+00:00"))
+        clock = lambda: frozen  # noqa: E731
     if a.did_dir:
         docs += [json.loads(p.read_text(encoding="utf-8"))
                  for p in sorted(Path(a.did_dir).glob("*.json"))]
     resolver = LocalDidResolver(docs)
     issuers = [did_of("issuer")] + list(a.accept_issuer or [])
     base_url = a.public_url or f"http://{a.host}:{a.port}"
+    if a.pinned:
+        binding = pinned.pinned_binding(resolver)
     app, _card, executor = create_supplier_app(base_url, resolver=resolver,
                                                accepted_issuers=issuers,
-                                               own_aae=issue_supplier_aae(utc_now()))
+                                               own_aae=issue_supplier_aae(clock()),
+                                               clock=clock, binding=binding,
+                                               audience=audience)
     if a.record:
         record = open(a.record, "a", encoding="utf-8")
 
@@ -395,7 +491,8 @@ def cmd_serve(a) -> int:
 
         executor.observer = observer
     print(f"Reference supplier on {base_url} (card at /.well-known/agent-card.json), "
-          f"accepted issuers {issuers}", flush=True)
+          f"accepted issuers {issuers}" + (f", clock fixed at {at}" if at else "")
+          + (", pinned nonces" if a.pinned else ""), flush=True)
     uvicorn.run(app, host=a.host, port=a.port, log_level="warning")
     return 0
 
@@ -431,6 +528,14 @@ def cmd_fixtures(a) -> int:
     return 0
 
 
+def cmd_pin(a) -> int:
+    from . import pinned
+    out = Path(a.out) if a.out else pinned.PINNED_DIR
+    files = pinned.build(out)
+    print(f"wrote {len(files)} files to {out}")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m aae_a2a.crossrun")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -442,11 +547,15 @@ def main(argv=None) -> int:
     s.add_argument("--did-dir", help="directory of further DID documents (*.json) to resolve")
     s.add_argument("--accept-issuer", action="append", help="further accepted root issuer DID")
     s.add_argument("--record", help="append one JSON line per decision to this file")
+    s.add_argument("--at", help="fix the supplier's clock at this RFC 3339 UTC instant")
+    s.add_argument("--pinned", help="pinned bundle directory: fixed clock (its verify_at "
+                                     "unless --at), its audience and its nonce derivation")
     s.set_defaults(fn=cmd_serve)
 
     c = sub.add_parser("client", help="run the cases with the reference buyer")
     c.add_argument("--url", required=True, help="supplier base URL (the Agent Card host)")
-    c.add_argument("--out", required=True, help="result file to write")
+    c.add_argument("--out", help="result file to write (not with --pinned)")
+    c.add_argument("--pinned", help="present the bytes of this pinned bundle instead of the cases")
     c.add_argument("--cases", help="comma-separated case ids; the others are skipped")
     c.add_argument("--participant", default="anonymous")
     c.add_argument("--participant-url")
@@ -458,6 +567,10 @@ def main(argv=None) -> int:
     k = sub.add_parser("check", help="validate result files")
     k.add_argument("files", nargs="+")
     k.set_defaults(fn=cmd_check)
+
+    q = sub.add_parser("pin", help="rebuild the pinned bundle")
+    q.add_argument("--out", help="directory (default tests/vectors/crossrun/pinned)")
+    q.set_defaults(fn=cmd_pin)
 
     f = sub.add_parser("fixtures", help="write the DID documents and test keys")
     f.add_argument("--out", default=str(CASES_FILE.parent))

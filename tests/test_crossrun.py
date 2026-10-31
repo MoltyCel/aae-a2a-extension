@@ -78,7 +78,8 @@ def test_reference_supplier_records_each_decision(env):
     rows = []
     env.executor.observer = lambda task_id, result, state: rows.append((task_id, state, result))
     results = _reference_results(env)
-    tasks = [r for r in results if r.get("task_id")]
+    flat = [o for r in results for o in (r["attempts"] if "attempts" in r else [r])]
+    tasks = [r for r in flat if r.get("task_id")]
     assert [(r["task_id"], r["task_state"]) for r in tasks] == [(t, s) for t, s, _ in rows]
     assert all(res["request_digest"] == r["request_digest"] for r, (_, _, res) in zip(tasks, rows))
 
@@ -182,3 +183,71 @@ def test_offline_template_has_the_members_of_an_offline_file(env):
     doc = _offline(_reference_results(env))
     assert set(template) == set(doc)
     assert set(doc["receiver"]) <= set(template["receiver"])
+
+
+# --- pinned bundle and the retry pair (CROSSRUN.md 4, 5) ----------------------------
+
+PINNED = FIXTURES / "pinned"
+
+
+def test_pinned_bundle_rebuilds_byte_for_byte(tmp_path):
+    from aae_a2a import pinned
+    pinned.build(tmp_path)
+    for p in sorted(PINNED.rglob("*")):
+        if p.is_file():
+            assert (tmp_path / p.relative_to(PINNED)).read_bytes() == p.read_bytes(), p.name
+    assert sorted(q.relative_to(tmp_path) for q in tmp_path.rglob("*") if q.is_file()) == \
+        sorted(q.relative_to(PINNED) for q in PINNED.rglob("*") if q.is_file())
+
+
+def test_pinned_manifest_covers_every_file():
+    from aae_a2a import pinned
+    assert pinned.verify_manifest(PINNED) == []
+
+
+def test_pinned_authorization_is_separate_from_admission():
+    """Every attempt is a valid authorization, the second of XR-20 included."""
+    from aae_a2a import pinned
+    bundle = pinned.load(PINNED)
+    for case in bundle["cases"]:
+        for att in case["attempts"]:
+            if "authorization" in att["expect"]:
+                assert pinned.authorization(PINNED, case, att) == att["expect"]["authorization"], \
+                    (case["id"], att["attempt"])
+    xr20 = next(c for c in bundle["cases"] if c["id"] == "XR-20")
+    assert [a["expect"]["admission"]["admitted"] for a in xr20["attempts"]] == [True, False]
+
+
+def test_pinned_bytes_give_the_expected_results_with_a_fixed_clock():
+    from aae_a2a import pinned
+    from aae_a2a.server import create_supplier_app
+    bundle = pinned.load(PINNED)
+    res = pinned.resolver(PINNED)
+    at = pinned.VERIFY_AT
+    app, _card, _ex = create_supplier_app(BASE_URL, resolver=res,
+                                          accepted_issuers=bundle["params"]["accepted_issuers"],
+                                          clock=lambda: at, binding=pinned.pinned_binding(res),
+                                          audience=bundle["params"]["audience"])
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL)
+    results = run(crossrun.run_pinned(BASE_URL, PINNED, httpx_client=client))
+    assert [(r["id"], r["result"]) for r in results] == [("XR-01", "pass"), ("XR-06", "pass"),
+                                                         ("XR-20", "pass")], results
+
+
+def test_pinned_cases_agree_with_cases_json():
+    from aae_a2a import pinned
+    spec, _ = _cases()
+    by_id = {c["id"]: c for c in spec["cases"]}
+    for case in pinned.load(PINNED)["cases"]:
+        live = by_id[case["id"]]
+        assert case["request_part"] == live["request_part"]
+        exp = live["expect"]["attempts"] if live["expect"]["kind"] == "retry" else [live["expect"]]
+        assert [a["expect"] for a in case["attempts"]] == exp, case["id"]
+
+
+def test_crossrun_md_links_resolve_in_this_commit():
+    import re
+    text = (ROOT / "CROSSRUN.md").read_text()
+    for target in re.findall(r"\]\(([^)#]+)(?:#[^)]*)?\)", text):
+        if not target.startswith("http"):
+            assert (ROOT / target).exists(), target

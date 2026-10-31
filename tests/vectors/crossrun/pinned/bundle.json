@@ -1,0 +1,196 @@
+{
+  "format": "aae-a2a-crossrun-pinned/1",
+  "profile": "https://moltrust.ch/extensions/aae/v1",
+  "verify_at": "2026-11-02T09:00:00Z",
+  "params": {
+    "draft": "draft-kroehl-agentic-trust-aae-02",
+    "audience": "https://supplier.example/a2a/jsonrpc",
+    "skills": {
+      "get-quote": {
+        "action": "read"
+      },
+      "place-order": {
+        "action": "pay"
+      }
+    },
+    "did_methods": [
+      "example"
+    ],
+    "accepted_issuers": [
+      "did:example:issuer"
+    ]
+  },
+  "did_documents": [
+    "did/buyer-sub.json",
+    "did/buyer.json",
+    "did/issuer.json",
+    "did/other-agent.json",
+    "did/supplier.json"
+  ],
+  "nonce": {
+    "master_key": "SHA-256(ASCII('aae-a2a-extension/pinned/v1/nonce-master'))",
+    "random": "first 32 hex digits of SHA-256(UTF-8('aae-a2a-extension/pinned/v1/nonce/' + aae_id + '/' + n)), n counting the nonces minted for that aae_id from 1",
+    "lifetime_s": 300
+  },
+  "description": "Fixed bytes for XR-01, XR-06 and XR-20 at verify_at. Present the cases in order, each attempt as a new task. authorization is the outcome of every step but step 5; admission is step 5 against what the server has already accepted. TEST-ONLY keys.",
+  "cases": [
+    {
+      "id": "XR-01",
+      "aae": "XR-01.aae.jws",
+      "request_part": {
+        "skill": "place-order",
+        "transaction": {
+          "amount": 120,
+          "currency": "EUR",
+          "items": [
+            {
+              "sku": "PAPER-A4",
+              "qty": 20
+            }
+          ]
+        }
+      },
+      "attempts": [
+        {
+          "attempt": 1,
+          "challenge": {
+            "nonce": "e88af6221671def834397d28a3f161d0.1793610300.M4nENxy0EynwIdfl6zKKF6ar3BPg0ZkAAzHTXTn94Cc",
+            "aud": "https://supplier.example/a2a/jsonrpc",
+            "aae_id": "urn:uuid:09925080-9c05-5cdc-9d48-1e910816a260"
+          },
+          "challenge_response": "XR-01.1.response.jws",
+          "expect": {
+            "kind": "task",
+            "task_state": "TASK_STATE_COMPLETED",
+            "verdict": "ACCEPT",
+            "request_digest": "sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a"
+          }
+        }
+      ]
+    },
+    {
+      "id": "XR-06",
+      "aae": "XR-06.aae.jws",
+      "request_part": {
+        "skill": "place-order",
+        "transaction": {
+          "amount": 120,
+          "currency": "EUR",
+          "items": [
+            {
+              "sku": "PAPER-A4",
+              "qty": 20
+            }
+          ]
+        }
+      },
+      "attempts": [
+        {
+          "attempt": 1,
+          "challenge": {
+            "nonce": "a1915fac3d62557eef19abfce3c783d3.1793610300.-Ss0TwYJEsOKpnq1Fb5zY20KbtShPlFtyAnww1Q6zz8",
+            "aud": "https://supplier.example/a2a/jsonrpc",
+            "aae_id": "urn:uuid:e5627552-f9ab-54f2-861f-d71d9b5b3e4d"
+          },
+          "challenge_response": "XR-06.1.response.jws",
+          "expect": {
+            "kind": "task",
+            "task_state": "TASK_STATE_COMPLETED",
+            "verdict": "ACCEPT",
+            "request_digest": "sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a",
+            "task_id_differs_from": "XR-01",
+            "authorization": {
+              "verdict": "ACCEPT",
+              "steps_passed": [
+                1,
+                2,
+                3,
+                4,
+                6,
+                7
+              ]
+            },
+            "admission": {
+              "admitted": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "XR-20",
+      "aae": "XR-20.aae.jws",
+      "request_part": {
+        "skill": "place-order",
+        "transaction": {
+          "amount": 120,
+          "currency": "EUR"
+        }
+      },
+      "attempts": [
+        {
+          "attempt": 1,
+          "challenge": {
+            "nonce": "4d7ba53235d32bc2074b4a929f9da68d.1793610300.s9JRGPBgTmCxRXuHEdoRe1sX8RbX2SYYVwA9XZKsf-o",
+            "aud": "https://supplier.example/a2a/jsonrpc",
+            "aae_id": "urn:uuid:f437bebb-9866-54ec-8ebb-5bd7b4dcca1f"
+          },
+          "challenge_response": "XR-20.1.response.jws",
+          "expect": {
+            "kind": "task",
+            "task_state": "TASK_STATE_COMPLETED",
+            "verdict": "ACCEPT",
+            "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+            "authorization": {
+              "verdict": "ACCEPT",
+              "steps_passed": [
+                1,
+                2,
+                3,
+                4,
+                6,
+                7
+              ]
+            },
+            "admission": {
+              "admitted": true
+            }
+          }
+        },
+        {
+          "attempt": 2,
+          "challenge": {
+            "nonce": "80379df1bcea6fc772078e8afdb83ffd.1793610300.prhy8WxV31jKWgP7I3wRqIbqP_Enp7oVDl7Z7oNdQG0",
+            "aud": "https://supplier.example/a2a/jsonrpc",
+            "aae_id": "urn:uuid:f437bebb-9866-54ec-8ebb-5bd7b4dcca1f"
+          },
+          "challenge_response": "XR-20.2.response.jws",
+          "expect": {
+            "kind": "task",
+            "task_state": "TASK_STATE_REJECTED",
+            "verdict": "REJECT",
+            "step": 5,
+            "reason_code": "single_use_already_consumed",
+            "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+            "authorization": {
+              "verdict": "ACCEPT",
+              "steps_passed": [
+                1,
+                2,
+                3,
+                4,
+                6,
+                7
+              ]
+            },
+            "admission": {
+              "admitted": false,
+              "step": 5,
+              "reason_code": "single_use_already_consumed"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
