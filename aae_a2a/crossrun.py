@@ -36,7 +36,8 @@ from .constants import AAE_DRAFT, EXTENSION_URI
 from .digest import request_digest
 from .jose import b64url_encode, sign_compact
 from .testkeys import (PARTIES, buyer_constraints, buyer_mandate, demo_key, did_document,
-                       did_of, issue_buyer_aae, issue_supplier_aae, kid_of, make_vc)
+                       did_of, held_mandate, issue_buyer_aae, issue_supplier_aae, kid_of,
+                       make_vc, ratification_proof, PRINCIPAL_DID)
 
 ROOT = Path(__file__).resolve().parent.parent
 CASES_FILE = ROOT / "tests" / "vectors" / "crossrun" / "cases.json"
@@ -78,6 +79,8 @@ def build_aae(variant: str, audience: str) -> str | None:
         return issue_buyer_aae(now, domains)
     if variant == "single_use":
         return issue_buyer_aae(now, domains, single_use=True)
+    if variant == "hold":
+        return issue_buyer_aae(now, domains, mandate=held_mandate(HOLD_ACTION))
     if variant == "expired":
         return issue_buyer_aae(now, domains, not_before=now - timedelta(hours=2),
                                not_after=now - timedelta(hours=1))
@@ -103,6 +106,24 @@ def build_aae(variant: str, audience: str) -> str | None:
         body = '{"issuer":"' + did_of("other-agent") + '",' + body[1:]
         return sign_raw(header, body.encode("utf-8"), demo_key("issuer"))
     raise ValueError(f"unknown AAE variant {variant!r}")
+
+
+# The action of the hold cases XR-21 to XR-23 (CROSSRUN.md, "Variants").
+HOLD_ACTION = {"verb": "pay", "category": "office-supplies"}
+
+
+def ratification_for(variant: str, prior_core_digest: str):
+    """(decision, authority proof) of a ratification variant, or None."""
+    from .enforce import APPROVED
+    mandate = held_mandate(HOLD_ACTION)
+    if variant == "principal":
+        return APPROVED, ratification_proof(prior_core_digest, APPROVED, mandate)
+    if variant == "stranger":
+        return APPROVED, ratification_proof(prior_core_digest, APPROVED, mandate,
+                                            signer="mallory", authority="did:example:mallory")
+    if variant == "none":
+        return None
+    raise ValueError(f"unknown ratification variant {variant!r}")
 
 
 def sign_raw(header: dict, payload: bytes, key) -> str:
@@ -179,6 +200,9 @@ def evaluate(case: dict, obs: dict, task_ids: dict[str, str]) -> tuple[str, list
             fails.append(f"steps_passed {steps} lacks one of 1-7")
     if "reason_code" in exp and obs.get("reason_code") != exp["reason_code"]:
         notes.append(f"reason_code {obs.get('reason_code')} != {exp['reason_code']}")
+    if "ratification_status" in exp and obs.get("ratification_status") != exp["ratification_status"]:
+        fails.append(f"ratification_status {obs.get('ratification_status')} != "
+                     f"{exp['ratification_status']}")
     # Admission is step 5 against what the server has already accepted. A server
     # reports it through the verdict; authorization (every step but 5) is not
     # observable from a rejection at step 5 and is checked on the pinned bundle.
@@ -199,8 +223,10 @@ def observe_task(task) -> dict:
     if res.get("verdict") == "REJECT":
         obs["step"] = int(res["step"])
         obs["reason_code"] = res.get("reason_code")
-    elif res.get("verdict") == "ACCEPT":
+    elif res.get("verdict") in ("ACCEPT", "PENDING"):
         obs["steps_passed"] = [int(s) for s in res.get("steps_passed", [])]
+    if isinstance(res.get("ratification"), dict):
+        obs["ratification_status"] = res["ratification"].get("status")
     return obs
 
 
@@ -232,6 +258,12 @@ async def run_cases(base_url: str, cases: list[dict], only: set[str] | None = No
                 try:
                     task = await buyer.request(rp["skill"], rp["transaction"], aae=aae,
                                                activate=case["activate"], respond=respond)
+                    held = task_result(task) or {}
+                    if case.get("ratification") and held.get("verdict") == "PENDING":
+                        closing = ratification_for(case["ratification"],
+                                                   held["enforce"]["core_digest"])
+                        if closing is not None:
+                            task = await buyer.send_ratification(task, *closing)
                     attempts.append(observe_task(task))
                 except A2AError as exc:
                     attempts.append(observe_error(exc))
@@ -478,7 +510,7 @@ def cmd_serve(a) -> int:
                                                accepted_issuers=issuers,
                                                own_aae=issue_supplier_aae(clock()),
                                                clock=clock, binding=binding,
-                                               audience=audience)
+                                               audience=audience, deferred_decisions=True)
     if a.record:
         record = open(a.record, "a", encoding="utf-8")
 
@@ -508,13 +540,15 @@ def fixture_keys() -> dict:
     from public labels and are not secrets (README, "Keys")."""
     from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
     keys = {}
-    for name in ("issuer", "buyer", "mallory"):
+    for name in ("issuer", "buyer", "mallory", "principal"):
         seed = demo_key(name).private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
-        keys[name] = {"did": did_of(name), "kid": kid_of(name) if name != "mallory" else None,
+        did = PRINCIPAL_DID if name == "principal" else did_of(name)
+        keys[name] = {"did": did, "kid": kid_of(name) if name not in ("mallory", "principal") else None,
                       "ed25519_seed_hex": seed.hex()}
     return {"description": "TEST-ONLY Ed25519 keys. seed = SHA-256(UTF-8('aae-a2a-extension/"
                            "testkey/v1/' + name)). Public by construction; never use them "
-                           "for anything but tests. mallory has no DID document.",
+                           "for anything but tests. mallory has no DID document; principal "
+                           "has none either, its key is carried in the mandate (-02 6.4).",
             "keys": keys}
 
 

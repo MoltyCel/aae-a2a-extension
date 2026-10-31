@@ -128,6 +128,18 @@ class BuyerAgent:
         return await self._send(follow_up, activate)
 
 
+    async def send_ratification(self, task: Task, decision: str, authority_proof,
+                                activate: bool = True) -> Task:
+        """Close a task held under PENDING (spec 7.6) with a ratification."""
+        msg = Message(role=Role.ROLE_USER, message_id=str(uuid.uuid4()),
+                      task_id=task.id, context_id=task.context_id,
+                      parts=[Part(text="AAE ratification")])
+        msg.metadata.update({EXTENSION_URI: {"ratification": {
+            "decision": decision, "authority_proof": authority_proof}}})
+        msg.extensions.append(EXTENSION_URI)
+        return await self._send(msg, activate)
+
+
 def task_result(task: Task) -> dict | None:
     md = json_format.MessageToDict(task.metadata) if task.HasField("metadata") else {}
     return (md.get(EXTENSION_URI) or {}).get("result")

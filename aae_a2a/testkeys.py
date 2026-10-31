@@ -100,6 +100,37 @@ def buyer_mandate() -> dict:
     }
 
 
+# The principal of buyer_mandate(). It has no DID document: under -02 6.4 the
+# key that checks its ratification comes from the mandate, never from elsewhere.
+PRINCIPAL_DID = "did:example:principal-acme"
+
+
+def public_key_hex(name: str) -> str:
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    return demo_key(name).public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
+
+
+def held_mandate(action: dict) -> dict:
+    """buyer_mandate() with a hold grant for `action` and its principal's key:
+    an order inside the grant is PENDING until the principal ratifies it."""
+    from . import enforce
+    return {**buyer_mandate(),
+            "principal": {"did": PRINCIPAL_DID, "public_key": public_key_hex("principal")},
+            "grants": [{"action_binding": enforce.action_binding(action),
+                        "type_fields": sorted(action, key=lambda k: k != "verb"),
+                        "disposition": "hold",
+                        "constraints": [{"type": "range", "field": "amount", "lo": 0, "hi": 300},
+                                        {"type": "exact", "field": "currency", "value": "EUR"}]}]}
+
+
+def ratification_proof(prior_core_digest: str, decision: str, mandate: dict, *,
+                       signer: str = "principal", authority: str = PRINCIPAL_DID) -> dict:
+    """The authority proof of -02 6.4, signed with a test key."""
+    from . import enforce
+    sig = demo_key(signer).sign(enforce.statement_bytes(prior_core_digest, decision, authority))
+    return {"mandate": mandate, "authority": authority, "signature": sig.hex()}
+
+
 def buyer_constraints(domains: list[str]) -> dict:
     return {
         "max_transaction_value": {"value": 500, "currency": "EUR", "required": True},

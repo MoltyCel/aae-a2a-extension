@@ -1,5 +1,5 @@
 {
-  "description": "TEST-ONLY Ed25519 keys. seed = SHA-256(UTF-8('aae-a2a-extension/testkey/v1/' + name)). Public by construction; never use them for anything but tests. mallory has no DID document.",
+  "description": "TEST-ONLY Ed25519 keys. seed = SHA-256(UTF-8('aae-a2a-extension/testkey/v1/' + name)). Public by construction; never use them for anything but tests. mallory has no DID document; principal has none either, its key is carried in the mandate (-02 6.4).",
   "keys": {
     "issuer": {
       "did": "did:example:issuer",
@@ -15,6 +15,11 @@
       "did": "did:example:mallory",
       "kid": null,
       "ed25519_seed_hex": "cdbd5a45e679ea54640e3cfe65091a8e26ba9d61b1a83704e9cfc06cd83fa675"
+    },
+    "principal": {
+      "did": "did:example:principal-acme",
+      "kid": null,
+      "ed25519_seed_hex": "ac0b6b94eb6c4063b571e4bcd9ed5e54d1d80895d1b769922bd4319358d2e8e7"
     }
   }
 }

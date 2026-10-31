@@ -1,10 +1,13 @@
 # Derived from examples/enforce-verify.py in MoltyCel/aae-conformance-vectors
 # (commit 2f117799c604f258e67d5c13d69fea63881bdae0),
 # Copyright (c) 2026 CryptoKRI GmbH, Zurich (MolTrust), Apache License 2.0.
-# Modified: reduced to the grant-evaluation kernel (enforce_check); the
-# ratification part and the vector harness are not included; the exact and
-# action_binding comparisons use hmac.compare_digest (constant time, -02 2.2.3/2.5.1).
-"""Grant evaluation kernel of AAE -02 sections 2.2.1-2.2.3, 2.5 and 6.1.
+# Modified: the grant-evaluation kernel (enforce_check) and the ratification
+# kernel (ratify, -02 6.3/6.4); the vector harness is not included; the exact and
+# action_binding comparisons and the authority DID comparison use
+# hmac.compare_digest (constant time, -02 2.2.3/2.5.1/6.4), and an authority given
+# as a DID URL with a path, query or fragment is not matched (-02 6.4).
+"""Grant evaluation and ratification kernels of AAE -02 sections 2.2.1-2.2.3,
+2.5, 6.1, 6.3 and 6.4.
 
 Stateless and clock-free by construction (AAE -02 section 2.5.3).
 """
@@ -22,8 +25,14 @@ TAG_ACTION = b"aae:enforce-action:v1\x00"
 TAG_MANDATE = b"aae:enforce-mandate:v1\x00"
 TAG_TRANSACTION = b"aae:enforce-transaction:v1\x00"
 TAG_CORE = b"aae:enforce-core:v1\x00"
+TAG_RATIFY_STATEMENT = b"aae:enforce-ratify-statement:v1\x00"
+TAG_RATIFY_CORE = b"aae:enforce-ratify-core:v1\x00"
 
 ENFORCE_VERSION = "3.0"
+RATIFY_VERSION = "3.0"
+APPROVED, DISAPPROVED = "APPROVED", "DISAPPROVED"
+RATIFIED, REJECTED = "RATIFIED", "REJECTED"
+MAX_RATIFICATION_AUTHORITIES = 64
 
 DISPOSITIONS = ("allow", "hold", "forbid")
 CONSTRAINT_TYPES = ("exact", "enum", "range")
@@ -272,3 +281,144 @@ def enforce_check(mandate, transaction, prev_core_digest=None) -> dict:
 def action_binding(action) -> str | None:
     """AAE -02 section 2.2.2 action_binding for an action object."""
     return digest(TAG_ACTION, action)
+
+
+# --- ratification (AAE -02 sections 6.3 and 6.4) ------------------------------------------
+
+class RatifyError(Exception):
+    """A caller error of -02 section 6.4: the question does not line up, so no
+    ratification record is produced."""
+
+
+def statement_bytes(prior_core_digest: str, decision: str, authority_did: str) -> bytes:
+    """What an authority signs (-02 section 6.3)."""
+    return TAG_RATIFY_STATEMENT + jcs.canonicalize({
+        "ratify_version": RATIFY_VERSION, "ratifies": prior_core_digest,
+        "decision": decision, "authority": authority_did})
+
+
+def mandate_authorities(mandate) -> list[tuple[str, str, str]]:
+    """(did, public_key hex, role label) for the two sources of -02 section 6.4:
+    mandate.principal, then each ratification_authorities entry carrying both a
+    did and a public_key, up to the first 64. The role is reported, never read."""
+    if not isinstance(mandate, dict):
+        return []
+    out = []
+    principal = mandate.get("principal")
+    if isinstance(principal, dict):
+        did, key = principal.get("did"), principal.get("public_key")
+        if isinstance(did, str) and isinstance(key, str):
+            out.append((did, key, "principal"))
+    entries = mandate.get("ratification_authorities")
+    for entry in (entries if isinstance(entries, list) else [])[:MAX_RATIFICATION_AUTHORITIES]:
+        if not isinstance(entry, dict):
+            continue
+        did, key = entry.get("did"), entry.get("public_key")
+        if isinstance(did, str) and isinstance(key, str):
+            role = entry.get("role")
+            out.append((did, key, role if isinstance(role, str) else "named_authority"))
+    return out
+
+
+def _same_did(a: str, b) -> bool:
+    if not isinstance(b, str) or any(ch in b for ch in "/?#"):
+        return False
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+def _ed25519_verify(public_key_hex, signature_hex, message: bytes) -> bool:
+    """Every decoding failure is a failed signature predicate (-02 section 6.4)."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    if not isinstance(public_key_hex, str) or not isinstance(signature_hex, str):
+        return False
+    try:
+        raw, sig = bytes.fromhex(public_key_hex), bytes.fromhex(signature_hex)
+    except ValueError:
+        return False
+    if len(raw) != 32 or len(sig) != 64:
+        return False
+    try:
+        Ed25519PublicKey.from_public_bytes(raw).verify(sig, message)
+        return True
+    except Exception:
+        return False
+
+
+def ratify(prior_record, decision, authority_proof, prev_core_digest=None) -> dict:
+    """The ratification record of -02 section 6.3 over prior_record {core,
+    core_digest}. Raises RatifyError for a caller error (-02 section 6.4)."""
+    if decision not in (APPROVED, DISAPPROVED):
+        raise RatifyError(f"decision must be APPROVED or DISAPPROVED, got {decision!r}")
+    if not isinstance(prior_record, dict):
+        raise RatifyError("prior_record missing or not an object")
+    core, claimed = prior_record.get("core"), prior_record.get("core_digest")
+    if not isinstance(core, dict) or not isinstance(claimed, str):
+        raise RatifyError("prior_record.core or core_digest missing")
+    if digest(TAG_CORE, core) != claimed:
+        raise RatifyError("prior_record.core_digest does not match its own core")
+    if not isinstance(core.get("mandate_digest"), str):
+        raise RatifyError("prior_record carries no mandate_digest")
+    prior_verdict = core.get("verdict")
+    if prior_verdict == PERMIT:
+        raise RatifyError("a PERMIT is not ratifiable — there is no status to change")
+    if prior_verdict not in (DENY, PENDING):
+        raise RatifyError(f"prior verdict {prior_verdict!r} is not ratifiable")
+    if prev_core_digest is not None and prev_core_digest != claimed:
+        raise RatifyError("prev_core_digest must equal the core_digest of the record being "
+                          f"ratified (ratifies {claimed}, got {prev_core_digest!r})")
+
+    trace = [pred("prior_ratifiable", None, PASS,
+                  f"prior verdict {prior_verdict} may be ratified", prior_verdict, None)]
+    authority_did, status, reason = None, REJECTED, "authority not established"
+    if not isinstance(authority_proof, dict):
+        trace.append(pred("authority_proof", None, FAIL,
+                          "authority_proof missing or not an object"))
+        reason = "authority_proof missing or not an object"
+    else:
+        mandate = authority_proof.get("mandate")
+        claimed_authority = authority_proof.get("authority")
+        supplied = digest(TAG_MANDATE, mandate) if mandate is not None else None
+        bound = supplied == core["mandate_digest"]
+        trace.append(pred("mandate_binding", "mandate", PASS if bound else FAIL,
+                          "supplied mandate is the one the prior record refers to" if bound
+                          else "supplied mandate does not match prior_record.mandate_digest",
+                          supplied, core["mandate_digest"]))
+        if not bound:
+            reason = "supplied mandate does not match the prior record"
+        else:
+            allowed = mandate_authorities(mandate)
+            match = next((a for a in allowed if _same_did(a[0], claimed_authority)), None)
+            trace.append(pred("authority_in_mandate", "authority", PASS if match else FAIL,
+                              f"authority derives from mandate as {match[2]}" if match
+                              else "authority is not the issuing principal and not a role "
+                                   "named in the mandate",
+                              claimed_authority, [d for d, _k, _r in allowed]))
+            if not match:
+                reason = "authority does not derive from the mandate"
+            else:
+                did, key_hex, role = match
+                ok = _ed25519_verify(key_hex, authority_proof.get("signature"),
+                                     statement_bytes(claimed, decision, did))
+                trace.append(pred("authority_signature", "signature", PASS if ok else FAIL,
+                                  "signature verifies against the mandate-held key" if ok
+                                  else "signature does not verify against the "
+                                       "mandate-held key"))
+                if ok:
+                    authority_did, status = did, RATIFIED
+                    reason = f"ratified by {role} {did}: prior {prior_verdict} -> {decision}"
+                else:
+                    reason = "authority signature does not verify"
+    rcore = {
+        "ratify_version": RATIFY_VERSION,
+        "ratifies": claimed,
+        "prior_verdict": prior_verdict,
+        "decision": decision,
+        "status": status,
+        "authority": authority_did,
+        "mandate_digest": core["mandate_digest"],
+        "trace": trace_for_core(trace),
+        "prev_core_digest": prev_core_digest if isinstance(prev_core_digest, str) else claimed,
+    }
+    return {"status": status, "decision": decision, "ratifies": claimed,
+            "authority": authority_did, "reason": reason, "trace": trace,
+            "core": rcore, "core_digest": digest(TAG_RATIFY_CORE, rcore)}

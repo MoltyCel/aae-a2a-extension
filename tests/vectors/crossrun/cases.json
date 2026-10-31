@@ -194,6 +194,30 @@
          "authorization": {"verdict": "ACCEPT", "steps_passed": [1, 2, 3, 4, 6, 7]}, "admission": {"admitted": true}},
         {"kind": "task", "task_state": "TASK_STATE_REJECTED", "verdict": "REJECT", "step": 5, "reason_code": "single_use_already_consumed", "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
          "authorization": {"verdict": "ACCEPT", "steps_passed": [1, 2, 3, 4, 6, 7]}, "admission": {"admitted": false, "step": 5, "reason_code": "single_use_already_consumed"}}]}
+    },
+    {
+      "id": "XR-21",
+      "title": "Held: the grant verdict is PENDING and no decision arrives (spec 7.6)",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"action": {"verb": "pay", "category": "office-supplies"}, "amount": 120, "currency": "EUR"}},
+      "aae": "hold", "challenge_response": "valid", "activate": true, "ratification": "none",
+      "expect": {"kind": "task", "task_state": "TASK_STATE_INPUT_REQUIRED", "verdict": "PENDING", "request_digest": "sha256:91d816ca447777616f133386a3be2d0129be4e7a5edd29b5f7aabd6b2aa26c70"}
+    },
+    {
+      "id": "XR-22",
+      "title": "Held, then ratified by the principal the mandate names (-02 section 6.3, 6.4)",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"action": {"verb": "pay", "category": "office-supplies"}, "amount": 120, "currency": "EUR"}},
+      "aae": "hold", "challenge_response": "valid", "activate": true, "ratification": "principal",
+      "expect": {"kind": "task", "task_state": "TASK_STATE_COMPLETED", "verdict": "ACCEPT", "request_digest": "sha256:91d816ca447777616f133386a3be2d0129be4e7a5edd29b5f7aabd6b2aa26c70", "ratification_status": "RATIFIED"}
+    },
+    {
+      "id": "XR-23",
+      "title": "Held, then a ratification from a party the mandate does not name: the hold stays",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"action": {"verb": "pay", "category": "office-supplies"}, "amount": 120, "currency": "EUR"}},
+      "aae": "hold", "challenge_response": "valid", "activate": true, "ratification": "stranger",
+      "expect": {"kind": "task", "task_state": "TASK_STATE_INPUT_REQUIRED", "verdict": "PENDING", "request_digest": "sha256:91d816ca447777616f133386a3be2d0129be4e7a5edd29b5f7aabd6b2aa26c70", "ratification_status": "REJECTED"}
     }
   ]
 }

@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 
 from aae_a2a import crossrun
 from aae_a2a.digest import request_digest
@@ -16,6 +17,12 @@ from .conftest import BASE_URL, run
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "vectors" / "crossrun"
 SHA = "0" * 40
+
+
+@pytest.fixture
+def env(deferred_env):
+    """The cross-run supplier declares deferred_decisions (CROSSRUN.md 1)."""
+    return deferred_env
 
 
 def _cases():
@@ -80,8 +87,14 @@ def test_reference_supplier_records_each_decision(env):
     results = _reference_results(env)
     flat = [o for r in results for o in (r["attempts"] if "attempts" in r else [r])]
     tasks = [r for r in flat if r.get("task_id")]
-    assert [(r["task_id"], r["task_state"]) for r in tasks] == [(t, s) for t, s, _ in rows]
-    assert all(res["request_digest"] == r["request_digest"] for r, (_, _, res) in zip(tasks, rows))
+    # A held task is decided twice, held and then closed (spec 7.6); the last
+    # decision per task is the one its result reports.
+    last = {}
+    for t, s, res in rows:
+        last[t] = (s, res)
+    assert [r["task_id"] for r in tasks] == list(last)
+    assert [(r["task_state"], r["request_digest"]) for r in tasks] == \
+        [(s, res["request_digest"]) for s, res in last.values()]
 
 
 def test_check_rejects_a_claim_its_observation_does_not_support(env):
