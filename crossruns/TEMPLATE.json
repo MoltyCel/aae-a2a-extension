@@ -2,7 +2,8 @@
   "format": "aae-a2a-crossrun/1",
   "profile": "https://moltrust.ch/extensions/aae/v1",
   "draft": "draft-kroehl-agentic-trust-aae-02",
-  "cases_sha256": "sha256:<SHA-256 of tests/vectors/crossrun/cases.json at the reference commit>",
+  "cases_commit": "<40-character commit SHA of this repository whose cases.json the run used>",
+  "cases_sha256": "sha256:<SHA-256 of tests/vectors/crossrun/cases.json at cases_commit>",
   "run_at": "<RFC 3339 UTC time of the run>",
   "participant": {
     "name": "<name to credit>",

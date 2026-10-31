@@ -67,7 +67,8 @@ def _reference_results(env):
 def _doc(results):
     _, digest = _cases()
     return {"format": crossrun.RESULT_FORMAT, "profile": crossrun.EXTENSION_URI,
-            "draft": crossrun.AAE_DRAFT, "cases_sha256": digest, "run_at": "2026-10-28T00:00:00Z",
+            "draft": crossrun.AAE_DRAFT, "cases_commit": SHA, "cases_sha256": digest,
+            "run_at": "2026-10-28T00:00:00Z",
             "participant": {"name": "test", "url": None},
             "client": {"implementation": "ref", "repository": crossrun.REFERENCE_REPO, "commit": SHA},
             "server": {"implementation": "ref", "repository": crossrun.REFERENCE_REPO, "commit": SHA},
@@ -130,10 +131,9 @@ def test_reason_code_difference_is_a_note_not_a_failure():
 
 
 def test_reported_runs_validate():
-    spec, digest = _cases()
     files = sorted(p for p in (ROOT / "crossruns").glob("*.json") if not p.name.startswith("TEMPLATE"))
     for p in files:
-        assert crossrun.check_result(json.loads(p.read_text()), spec, digest) == [], p.name
+        assert crossrun.check_reported(json.loads(p.read_text())) == [], p.name
 
 
 def test_template_has_the_members_of_a_result_file(env):
@@ -264,3 +264,61 @@ def test_crossrun_md_links_resolve_in_this_commit():
     for target in re.findall(r"\]\(([^)#]+)(?:#[^)]*)?\)", text):
         if not target.startswith("http"):
             assert (ROOT / target).exists(), target
+
+
+# --- a reported run is checked against the cases it ran (CROSSRUN.md 6) -------------
+
+BASE_6C857EE = "6c857eeb60a9dac379954f5be5900a10616dfc7b"
+
+
+def _run_from_expectations(spec):
+    """A result file whose observations are the expectations of `spec`."""
+    out = []
+    for n, c in enumerate(spec["cases"]):
+        e = c["expect"]
+        if e["kind"] == "error":
+            obs = {"jsonrpc_code": e["jsonrpc_code"], **({"reason_code": e["reason_code"]}
+                                                         if "reason_code" in e else {})}
+        else:
+            obs = {"task_id": f"t-{n}", "task_state": e["task_state"], "verdict": e["verdict"],
+                   "request_digest": e["request_digest"]}
+            if e["verdict"] == "REJECT":
+                obs.update(step=e["step"], reason_code=e["reason_code"])
+            else:
+                obs["steps_passed"] = [1, 2, 3, 4, 5, 6, 7]
+        out.append({"id": c["id"], "result": "pass", **obs})
+    return out
+
+
+def test_a_run_against_6c857ee_is_checked_with_the_cases_of_that_commit():
+    old, digest = crossrun.load_cases_at(BASE_6C857EE)
+    assert digest == "sha256:9c25d66899fa2b790e3fc51ac83cb9f2fa06f07f896f08b0a2d77c462e4eb99b"
+    assert len(old["cases"]) == 13
+    doc = {**_doc(_run_from_expectations(old)), "cases_commit": BASE_6C857EE,
+           "cases_sha256": digest}
+    assert crossrun.check_reported(doc) == []
+    # The same file is not valid against today's cases, which is why it is
+    # checked against its own.
+    spec, today = _cases()
+    assert crossrun.check_result(doc, spec, today) != []
+
+
+def test_a_run_with_a_wrong_cases_hash_is_rejected():
+    old, _ = crossrun.load_cases_at(BASE_6C857EE)
+    doc = {**_doc(_run_from_expectations(old)), "cases_commit": BASE_6C857EE,
+           "cases_sha256": "sha256:" + "1" * 64}
+    errs = crossrun.check_reported(doc)
+    assert any(e.startswith("cases_sha256 is not that of") for e in errs)
+
+
+def test_a_run_naming_no_readable_commit_is_rejected():
+    doc = {**_doc([]), "cases_commit": "f" * 40}
+    assert crossrun.check_reported(doc)[0].startswith("cases_commit:")
+    doc["cases_commit"] = "main"
+    assert crossrun.check_reported(doc)[0].startswith("cases_commit:")
+
+
+def test_credit_table_names_the_state_of_the_cases():
+    header = next(line for line in (ROOT / "crossruns" / "README.md").read_text().splitlines()
+                  if line.startswith("| Date |"))
+    assert "| Cases (commit) |" in header

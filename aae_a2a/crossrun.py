@@ -55,6 +55,31 @@ def load_cases(path: Path = CASES_FILE) -> tuple[dict, str]:
     return json.loads(raw), "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
+class CasesUnavailable(Exception):
+    """The cases a reported run names cannot be read from this repository."""
+
+
+def load_cases_at(commit: str) -> tuple[dict, str]:
+    """cases.json as it stood at `commit` of this repository, and its hash. A
+    reported run is checked against the cases it ran (CROSSRUN.md 6), not the
+    current ones. A shallow checkout fetches the commit first."""
+    if not _SHA1.match(str(commit)):
+        raise CasesUnavailable(f"{commit!r} is not a 40-character commit SHA")
+    rel = CASES_FILE.relative_to(ROOT).as_posix()
+
+    def show():
+        return subprocess.run(["git", "-C", str(ROOT), "show", f"{commit}:{rel}"],
+                              capture_output=True)
+    got = show()
+    if got.returncode != 0:
+        subprocess.run(["git", "-C", str(ROOT), "fetch", "-q", "--depth", "1", "origin", commit],
+                       capture_output=True)
+        got = show()
+    if got.returncode != 0:
+        raise CasesUnavailable(f"cases.json is not readable at {commit}")
+    return json.loads(got.stdout), "sha256:" + hashlib.sha256(got.stdout).hexdigest()
+
+
 def repo_commit() -> tuple[str | None, bool]:
     """HEAD of this checkout and whether the working tree differs from it."""
     try:
@@ -356,6 +381,7 @@ def cmd_client(a) -> int:
         "format": RESULT_FORMAT,
         "profile": EXTENSION_URI,
         "draft": AAE_DRAFT,
+        "cases_commit": commit,
         "cases_sha256": cases_digest,
         "run_at": utc_now().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "participant": {"name": a.participant, "url": a.participant_url},
@@ -385,8 +411,11 @@ def check_result(doc: dict, spec: dict, cases_digest: str) -> list[str]:
         errs.append(f"format is not {RESULT_FORMAT}")
     if doc.get("profile") != EXTENSION_URI or doc.get("draft") != AAE_DRAFT:
         errs.append("profile or draft differs")
+    if not _SHA1.match(str(doc.get("cases_commit"))):
+        errs.append("cases_commit is not a 40-character commit SHA")
     if doc.get("cases_sha256") != cases_digest:
-        errs.append("cases_sha256 is not that of tests/vectors/crossrun/cases.json")
+        errs.append("cases_sha256 is not that of tests/vectors/crossrun/cases.json at "
+                    "cases_commit")
     if not (doc.get("participant") or {}).get("name"):
         errs.append("participant.name missing")
     form = doc.get("form", "interactive")
@@ -461,12 +490,20 @@ def _check_offline(doc: dict) -> list[str]:
     return errs
 
 
+def check_reported(doc: dict) -> list[str]:
+    """Check a reported run against the cases of the commit it names."""
+    try:
+        spec, cases_digest = load_cases_at(doc.get("cases_commit"))
+    except CasesUnavailable as exc:
+        return [f"cases_commit: {exc}"]
+    return check_result(doc, spec, cases_digest)
+
+
 def cmd_check(a) -> int:
-    spec, cases_digest = load_cases()
     bad = 0
     for path in a.files:
         doc = json.loads(Path(path).read_text(encoding="utf-8"))
-        errs = check_result(doc, spec, cases_digest)
+        errs = check_reported(doc)
         s = doc.get("summary", {})
         status = "invalid" if errs else f"valid ({s.get('pass')} pass, {s.get('fail')} fail, " \
                                         f"{s.get('skipped')} skipped)"
