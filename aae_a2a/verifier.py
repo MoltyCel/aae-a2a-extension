@@ -189,6 +189,9 @@ class AaeVerifier:
             # The payload is parsed in step 2 by the draft; a payload that is not
             # JSON fails there.
             raise Reject(2 if step == 1 else step, "payload_not_json", str(exc)) from exc
+        if not isinstance(payload, dict):
+            # Before signing authority, which reads issuer from it (spec 7.2).
+            raise Reject(2 if step == 1 else step, "payload_not_object")
         return header, payload, kid.split("#", 1)[0]
 
     @staticmethod

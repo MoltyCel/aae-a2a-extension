@@ -34,7 +34,7 @@ from .buyer import BuyerAgent, task_result
 from .challenge import utc_now
 from .constants import AAE_DRAFT, EXTENSION_URI
 from .digest import request_digest
-from .jose import sign_compact
+from .jose import b64url_encode, sign_compact
 from .testkeys import (PARTIES, buyer_constraints, buyer_mandate, demo_key, did_document,
                        did_of, issue_buyer_aae, issue_supplier_aae, kid_of, make_vc)
 
@@ -44,6 +44,9 @@ RESULT_FORMAT = "aae-a2a-crossrun/1"
 REFERENCE_REPO = "https://github.com/MoltyCel/aae-a2a-extension"
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+# The audience of an offline receiver run, which has no endpoint to name: the
+# value of the spec's Section 4 example (CROSSRUN.md, "Audience").
+OFFLINE_AUDIENCE = "https://supplier.example/a2a/jsonrpc"
 
 
 def load_cases(path: Path = CASES_FILE) -> tuple[dict, str]:
@@ -80,18 +83,59 @@ def build_aae(variant: str, audience: str) -> str | None:
         return issue_buyer_aae(now, domains, mandate={**buyer_mandate(), "actions": ["read"]})
     if variant == "other_domain":
         return issue_buyer_aae(now, ["other-supplier.example"])
+    header = {"alg": "EdDSA", "cty": "aae+json", "kid": kid_of("issuer")}
+    vc = make_vc(subject=did_of("buyer"), issuer=did_of("issuer"), mandate=buyer_mandate(),
+                 constraints=buyer_constraints(domains), not_before=now - timedelta(minutes=5),
+                 not_after=now + timedelta(hours=1))
     if variant == "forged":
-        vc = make_vc(subject=did_of("buyer"), issuer=did_of("issuer"), mandate=buyer_mandate(),
-                     constraints=buyer_constraints(domains), not_before=now - timedelta(minutes=5),
-                     not_after=now + timedelta(hours=1))
-        return sign_compact({"alg": "EdDSA", "cty": "aae+json", "kid": kid_of("issuer")},
-                            vc, demo_key("mallory"))
+        return sign_compact(header, vc, demo_key("mallory"))
+    if variant == "payload_not_json":
+        # A correct signature over bytes that are not JSON: the signature passes
+        # step 1 (a)-(d), the payload fails at step 2 (spec 7.2, reading order).
+        return sign_raw(header, b'{"issuer": "did:example:issuer", ', demo_key("issuer"))
+    if variant == "duplicate_issuer":
+        # issuer twice, a foreign DID first. A first-wins parser run for step 1
+        # would fail signing authority there; the profile parses once, strictly,
+        # and fails at step 2.
+        body = json.dumps(vc, separators=(",", ":"), ensure_ascii=False)
+        body = '{"issuer":"' + did_of("other-agent") + '",' + body[1:]
+        return sign_raw(header, body.encode("utf-8"), demo_key("issuer"))
     raise ValueError(f"unknown AAE variant {variant!r}")
+
+
+def sign_raw(header: dict, payload: bytes, key) -> str:
+    """An EdDSA compact JWS over payload bytes as given, for payloads sign_compact
+    cannot produce (not JSON, duplicate member names)."""
+    h = b64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8"))
+    p = b64url_encode(payload)
+    return f"{h}.{p}.{b64url_encode(key.sign(f'{h}.{p}'.encode('ascii')))}"
 
 
 def wrong_key_response(challenge: dict, _aae_id: str) -> str:
     payload = {**challenge, "iat": utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")}
     return sign_compact({"alg": "EdDSA", "kid": kid_of("buyer")}, payload, demo_key("mallory"))
+
+
+def iat_response(offset_s: int):
+    """A correct challenge response whose iat is offset_s seconds from now: the
+    iat window of spec 7.4 step 4 is now - 360 s to now + 60 s. The cases sit
+    30 seconds inside or outside a bound, so a clock difference between the two
+    sides below 30 seconds does not change the outcome."""
+    def respond(challenge: dict, _aae_id: str) -> str:
+        iat = (utc_now() + timedelta(seconds=offset_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return sign_compact({"alg": "EdDSA", "kid": kid_of("buyer")},
+                            {**challenge, "iat": iat}, demo_key("buyer"))
+    return respond
+
+
+RESPONSES = {
+    "valid": None,
+    "wrong_key": wrong_key_response,
+    "iat_past_inside": iat_response(-330),
+    "iat_past_outside": iat_response(-390),
+    "iat_future_inside": iat_response(30),
+    "iat_future_outside": iat_response(90),
+}
 
 
 # --- evaluation: shared by `client` and `check` ----------------------------------------
@@ -159,7 +203,7 @@ async def run_cases(base_url: str, cases: list[dict], only: set[str] | None = No
                 out.append({"id": case["id"], "result": "skipped"})
                 continue
             rp = case["request_part"]
-            respond = wrong_key_response if case["challenge_response"] == "wrong_key" else None
+            respond = RESPONSES[case["challenge_response"]]
             try:
                 task = await buyer.request(rp["skill"], rp["transaction"],
                                            aae=build_aae(case["aae"], audience),
@@ -233,12 +277,21 @@ def check_result(doc: dict, spec: dict, cases_digest: str) -> list[str]:
         errs.append("cases_sha256 is not that of tests/vectors/crossrun/cases.json")
     if not (doc.get("participant") or {}).get("name"):
         errs.append("participant.name missing")
-    for side in ("client", "server"):
-        part = doc.get(side) or {}
-        if not part.get("implementation"):
-            errs.append(f"{side}.implementation missing")
-        if not _SHA1.match(str(part.get("commit"))):
-            errs.append(f"{side}.commit is not a 40-character commit SHA")
+    form = doc.get("form", "interactive")
+    if form == "interactive":
+        for side in ("client", "server"):
+            part = doc.get(side) or {}
+            if not part.get("implementation"):
+                errs.append(f"{side}.implementation missing")
+            if not _SHA1.match(str(part.get("commit"))):
+                errs.append(f"{side}.commit is not a 40-character commit SHA")
+    elif form == "offline":
+        errs += _check_offline(doc)
+    else:
+        errs.append(f"form {form!r} is neither interactive nor offline")
+    # An offline receiver decides every case itself, as a server does, so none
+    # may be skipped; an interactive client run may skip the optional ones.
+    required = (lambda c: True) if form == "offline" else (lambda c: c["client_side"] == "required")
     by_id = {c["id"]: c for c in spec["cases"]}
     seen, task_ids = [], {}
     for r in doc.get("cases", []):
@@ -248,7 +301,7 @@ def check_result(doc: dict, spec: dict, cases_digest: str) -> list[str]:
             continue
         seen.append(r["id"])
         if r.get("result") == "skipped":
-            if case["client_side"] == "required":
+            if required(case):
                 errs.append(f"{r['id']} is required and was skipped")
             continue
         if r.get("request_digest") is not None and not _DIGEST.match(r["request_digest"]):
@@ -263,6 +316,36 @@ def check_result(doc: dict, spec: dict, cases_digest: str) -> list[str]:
         errs.append(f"cases missing: {', '.join(missing)}")
     if doc.get("summary") != summarize(doc.get("cases", [])):
         errs.append("summary does not match the cases")
+    return errs
+
+
+_RFC3339_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$")
+
+
+def _check_offline(doc: dict) -> list[str]:
+    """The members an offline receiver run carries instead of client and server
+    (CROSSRUN.md, "Offline receiver runs")."""
+    errs = []
+    if "client" in doc or "server" in doc:
+        errs.append("an offline run names a receiver, not a client or server")
+    rec = doc.get("receiver") or {}
+    if not rec.get("implementation") or not rec.get("version"):
+        errs.append("receiver.implementation and receiver.version are required")
+    commit, content = rec.get("commit"), rec.get("content_sha256")
+    if commit is not None and not _SHA1.match(str(commit)):
+        errs.append("receiver.commit is not a 40-character commit SHA")
+    if content is not None and not _DIGEST.match(str(content)):
+        errs.append("receiver.content_sha256 is not sha256:<64 hex>")
+    if commit is None and content is None:
+        errs.append("receiver needs a commit or a content_sha256")
+    if doc.get("audience") != OFFLINE_AUDIENCE:
+        errs.append(f"audience is not {OFFLINE_AUDIENCE}")
+    if not _RFC3339_UTC.match(str(doc.get("evaluation_instant"))):
+        errs.append("evaluation_instant is not an RFC 3339 UTC time")
+    inv = doc.get("inventions")
+    if not isinstance(inv, list) or not all(isinstance(i, dict) and i.get("what") and i.get("choice")
+                                            for i in inv):
+        errs.append("inventions must be a list of {what, choice} (empty if there were none)")
     return errs
 
 

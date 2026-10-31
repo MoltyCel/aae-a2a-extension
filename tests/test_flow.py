@@ -268,3 +268,31 @@ def test_grant_deny_rejected_at_step_6(env):
 def test_grant_present_but_no_action_rejected(env):
     aae, _action = _grant_aae(utc_now())
     rejected_at(run(_order(env, aae)), 6, "grant_action_verb_mismatch")
+
+
+# --- reading order of steps 1 and 2 (spec 7.2) --------------------------------------
+
+def _signed_payload(body: bytes) -> str:
+    from aae_a2a.crossrun import sign_raw
+    return sign_raw({"alg": "EdDSA", "cty": "aae+json", "kid": kid_of("issuer")}, body,
+                    demo_key("issuer"))
+
+
+def test_payload_not_json_rejected_at_step_2(env):
+    rejected_at(run(_order(env, _signed_payload(b'{"issuer": '))), 2, "payload_not_json")
+
+
+def test_payload_json_but_not_object_rejected_at_step_2(env):
+    """Before signing authority, which reads issuer from the payload."""
+    rejected_at(run(_order(env, _signed_payload(b'["did:example:issuer"]'))), 2,
+                "payload_not_object")
+
+
+def test_duplicate_issuer_rejected_at_step_2_not_step_1(env):
+    now = utc_now()
+    vc = make_vc(subject=did_of("buyer"), issuer=did_of("issuer"), mandate=buyer_mandate(),
+                 constraints=buyer_constraints(DOMAINS), not_before=now - timedelta(minutes=1),
+                 not_after=now + timedelta(hours=1))
+    import json
+    body = '{"issuer":"' + did_of("other-agent") + '",' + json.dumps(vc, separators=(",", ":"))[1:]
+    rejected_at(run(_order(env, _signed_payload(body.encode()))), 2, "payload_not_json")

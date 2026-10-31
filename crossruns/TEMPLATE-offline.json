@@ -1,0 +1,33 @@
+{
+  "format": "aae-a2a-crossrun/1",
+  "form": "offline",
+  "profile": "https://moltrust.ch/extensions/aae/v1",
+  "draft": "draft-kroehl-agentic-trust-aae-02",
+  "cases_sha256": "sha256:<SHA-256 of tests/vectors/crossrun/cases.json at the reference commit>",
+  "run_at": "<RFC 3339 UTC time of the run>",
+  "participant": {
+    "name": "<name to credit>",
+    "url": "<optional: your project or profile URL>"
+  },
+  "receiver": {
+    "implementation": "<name of the receiver>",
+    "version": "<version of the receiver>",
+    "repository": "<optional: repository URL>",
+    "commit": "<40-character commit SHA, if the receiver is in a repository>",
+    "content_sha256": "sha256:<SHA-256 of the receiver's code archive, if it has no commit>"
+  },
+  "audience": "https://supplier.example/a2a/jsonrpc",
+  "evaluation_instant": "<RFC 3339 UTC instant every temporal check used>",
+  "inventions": [
+    {"what": "<where the profile or this guide is silent>", "choice": "<what the run chose>"}
+  ],
+  "cases": [
+    {"id": "XR-01", "result": "pass", "task_id": "<task id>", "task_state": "TASK_STATE_COMPLETED",
+     "verdict": "ACCEPT", "request_digest": "sha256:<64 hex>", "steps_passed": [1, 2, 3, 4, 5, 6, 7]},
+    {"id": "XR-03", "result": "pass", "task_id": "<task id>", "task_state": "TASK_STATE_REJECTED",
+     "verdict": "REJECT", "request_digest": "sha256:<64 hex>", "step": 7,
+     "reason_code": "max_transaction_value_exceeded"},
+    {"id": "XR-12", "result": "pass", "jsonrpc_code": -32008}
+  ],
+  "summary": {"pass": 0, "fail": 0, "skipped": 0}
+}

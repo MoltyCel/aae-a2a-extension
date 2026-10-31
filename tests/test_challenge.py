@@ -117,3 +117,26 @@ def test_key_not_under_authentication():
     with pytest.raises(ChallengeError, match="vm_not_authorized_authentication"):
         sb.verify_response(resp, subject_did=did_of("issuer"), aae_id=AAE_ID, aud=AUD,
                            expected_nonce=nonce, now=now)
+
+
+@pytest.mark.parametrize("offset_s,reason", [
+    (-360, None), (-361, "iat_too_old"), (60, None), (61, "iat_in_future"),
+])
+def test_iat_window_bounds_are_those_of_the_profile(offset_s, reason):
+    """Spec 7.4 step 4: lifetime 300 s and skew 60 s, both bounds included."""
+    sb, now, nonce = _setup()
+    now = now.replace(microsecond=0)  # iat carries whole seconds
+    p = _payload(nonce, now + timedelta(seconds=offset_s))
+    resp = sign_compact({"alg": "EdDSA", "kid": kid_of("buyer")}, p, demo_key("buyer"))
+    if reason is None:
+        _check(sb, resp, now, nonce)
+    else:
+        with pytest.raises(ChallengeError, match=reason):
+            _check(sb, resp, now, nonce)
+
+
+def test_minted_nonce_has_the_form_of_spec_6_2():
+    import re
+    sb, now, nonce = _setup()
+    m = re.fullmatch(r"([0-9a-f]{32,})\.([0-9]+)\.([A-Za-z0-9_-]{43})", nonce)
+    assert m and int(m.group(2)) == int(now.timestamp()) + 300

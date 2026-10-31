@@ -39,7 +39,9 @@ produce the result file itself (Section 6).
   outside `["PAPER-A4", "TONER-K1"]`, and then fails after the AAE was
   accepted. This is what produces the paired case (XR-02 against XR-03).
 - A clock within a few minutes of UTC. The reference buyer issues AAEs valid
-  from five minutes ago to one hour ahead.
+  from five minutes ago to one hour ahead. Cases XR-14 to XR-17 place `iat`
+  30 seconds inside or outside the window of spec Section 7.4 step 4, so client
+  and server clocks must agree to within 30 seconds for those four.
 
 ### What a client must do
 
@@ -75,8 +77,24 @@ with `--did-dir <directory of your DID documents>` and
 
 ## 3. Variants
 
-Each case names an AAE variant and a challenge-response variant. Unless a
-variant says otherwise, the AAE is a VC secured as an EdDSA compact JWS with
+### Audience
+
+Every case depends on one audience value: the challenge carries it as `aud`,
+and `allowed_domains` is built from its host.
+
+- In an interactive run the audience is `params.audience` of the Agent Card
+  the client discovered, the URL of the server's JSON-RPC endpoint (Section 1).
+  The reference supplier sets it from `--public-url`, or from
+  `http://<host>:<port>`.
+- In an offline run (Section 6.1) there is no endpoint to name. The audience is
+  `https://supplier.example/a2a/jsonrpc`, the value of the spec's Section 4
+  example, and the host in `allowed_domains` is `supplier.example`.
+
+### AAE and challenge-response variants
+
+"Now" is the server's clock in an interactive run and the evaluation instant
+in an offline run. Each case names an AAE variant and a challenge-response
+variant. Unless a variant says otherwise, the AAE is a VC secured as an EdDSA compact JWS with
 `cty` `aae+json` and `kid` `did:example:issuer#key-1`, issuer
 `did:example:issuer`, subject `did:example:buyer`, and:
 
@@ -96,11 +114,24 @@ variant says otherwise, the AAE is a VC secured as an EdDSA compact JWS with
 | `read_only` | `mandate.actions` `["read"]` |
 | `other_domain` | `allowed_domains` `["other-supplier.example"]` |
 | `none` | no `aae` member; `metadata[URI]` and the message `extensions` are left out |
+| `payload_not_json` | the same header, signed with `issuer`'s key over the payload bytes `{"issuer": "did:example:issuer", ` (not JSON) |
+| `duplicate_issuer` | the `valid` payload with a first member `"issuer": "did:example:other-agent"` added in front of it, so `issuer` appears twice; signed with `issuer`'s key |
 
 | Response variant | Meaning |
 | :-- | :-- |
 | `valid` | JWS over the challenge plus `iat` (now), `kid` `did:example:buyer#key-1`, signed with `buyer`'s key |
 | `wrong_key` | the same, signed with `mallory`'s key |
+| `iat_past_inside` | `valid` with `iat` 330 seconds before now |
+| `iat_past_outside` | `valid` with `iat` 390 seconds before now |
+| `iat_future_inside` | `valid` with `iat` 30 seconds after now |
+| `iat_future_outside` | `valid` with `iat` 90 seconds after now |
+
+The spec fixes the `iat` window at now minus 360 seconds to now plus 60
+seconds (Section 7.4 step 4). XR-14 to XR-17 sit 30 seconds on either side of
+each bound. XR-18 and XR-19 test the reading order of Section 7.2: the
+signature is valid in both, the payload is parsed once and strictly, and both
+fail at step 2. A receiver that reads `issuer` for step 1 with a first-wins
+parser would reject XR-19 at step 1 instead.
 
 `activate: false` means the presentation is sent without the
 `A2A-Extensions` header.
@@ -127,6 +158,12 @@ cases. A `client` run must cover the `required` ones and may skip the
 | XR-11 | optional | `other_domain` / `valid` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 7, `domain_not_in_allowlist` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
 | XR-12 | optional | `valid` / `valid`, not activated | `{"amount": 120, "currency": "EUR"}` | JSON-RPC error `-32008`, no task | none |
 | XR-13 | optional | `none` / `valid` | `{"amount": 120, "currency": "EUR"}` | JSON-RPC error `-32602`, `reason_code` `aae_missing`, no task | none |
+| XR-14 | optional | `valid` / `iat_past_inside` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_COMPLETED`, `ACCEPT` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+| XR-15 | optional | `valid` / `iat_past_outside` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 4, `iat_too_old` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+| XR-16 | optional | `valid` / `iat_future_inside` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_COMPLETED`, `ACCEPT` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+| XR-17 | optional | `valid` / `iat_future_outside` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 4, `iat_in_future` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+| XR-18 | optional | `payload_not_json` / `valid` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 2, `payload_not_json` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+| XR-19 | optional | `duplicate_issuer` / `valid` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 2, `payload_not_json` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
 
 The `request_digest` column is the value of spec Section 8.5 for that request
 part; the result of a rejection carries it as well (spec 8.2). XR-04 uses the
@@ -215,6 +252,27 @@ rejection, `step` equal the expected values, an accepted case has
 For an error case, `jsonrpc_code` decides. A different `reason_code` is a note,
 not a failure: spec 8.4 lets a server use codes it does not list.
 
+### 6.1 Offline receiver runs
+
+In an offline run a receiver you built decides each case from artefacts a
+client wrote, with no live counterpart: no Agent Card, no HTTP and no commits
+on the other side to name. The receiver plays the server role, so it decides
+every case and none may be skipped. Report it in the same format with
+`"form": "offline"` and these members in place of `client` and `server`. See
+[`crossruns/TEMPLATE-offline.json`](crossruns/TEMPLATE-offline.json).
+
+| Member | Content |
+| :-- | :-- |
+| `form` | `"offline"`; absent or `"interactive"` means the form above |
+| `receiver` | `implementation` and `version`; `commit` (40-character SHA) if the receiver is in a repository, otherwise `content_sha256` (`sha256:` and the SHA-256 of an archive of its code); optional `repository` |
+| `audience` | `https://supplier.example/a2a/jsonrpc` (Section 3, "Audience") |
+| `evaluation_instant` | the RFC 3339 UTC instant every temporal check used and every issued validity window was computed from |
+| `inventions` | one `{"what", "choice"}` per point where the profile or this guide is silent and the run had to choose, under the participant's name; an empty list if there were none |
+
+The case entries and the pass rule are those of the interactive form. A run
+that derives task ids deterministically so that it reproduces records that as
+an invention; the profile leaves the form of task ids open (spec Section 8.3).
+
 Validate before reporting:
 
 ```
@@ -222,8 +280,9 @@ Validate before reporting:
 ```
 
 `check` recomputes `pass` or `fail` from what each entry records, so a file
-cannot claim a pass its own observations do not support. It also requires
-commit SHAs for both sides and every `required` case.
+cannot claim a pass its own observations do not support. For an interactive
+run it also requires commit SHAs for both sides and every `required` case; for
+an offline run it requires the members of Section 6.1 and every case.
 
 ## 7. Reporting a run
 

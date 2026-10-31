@@ -117,7 +117,7 @@ def test_reason_code_difference_is_a_note_not_a_failure():
 
 def test_reported_runs_validate():
     spec, digest = _cases()
-    files = sorted(p for p in (ROOT / "crossruns").glob("*.json") if p.name != "TEMPLATE.json")
+    files = sorted(p for p in (ROOT / "crossruns").glob("*.json") if not p.name.startswith("TEMPLATE"))
     for p in files:
         assert crossrun.check_result(json.loads(p.read_text()), spec, digest) == [], p.name
 
@@ -141,3 +141,44 @@ def test_crossrun_md_lists_every_case_with_its_expected_result():
         for value in (e.get("task_state"), e.get("request_digest"), e.get("reason_code")):
             if value is not None:
                 assert value in row, (c["id"], value)
+
+
+# --- offline receiver runs (CROSSRUN.md 6.1) ----------------------------------------
+
+def _offline(results):
+    doc = _doc(results)
+    del doc["client"], doc["server"]
+    doc.update({"form": "offline",
+                "receiver": {"implementation": "receiver", "version": "1.0",
+                             "content_sha256": "sha256:" + "a" * 64},
+                "audience": crossrun.OFFLINE_AUDIENCE,
+                "evaluation_instant": "2026-10-30T20:15:00Z",
+                "inventions": [{"what": "task ids", "choice": "uuid5 of the case id"}]})
+    return doc
+
+
+def test_offline_run_validates(env):
+    spec, digest = _cases()
+    assert crossrun.check_result(_offline(_reference_results(env)), spec, digest) == []
+
+
+def test_offline_run_needs_its_members_and_every_case(env):
+    spec, digest = _cases()
+    doc = _offline(_reference_results(env))
+    doc["cases"][6] = {"id": doc["cases"][6]["id"], "result": "skipped"}
+    doc["summary"] = crossrun.summarize(doc["cases"])
+    doc["receiver"] = {"implementation": "receiver", "version": "1.0"}
+    doc["audience"] = "https://elsewhere.example/a2a"
+    doc["inventions"] = None
+    errs = crossrun.check_result(doc, spec, digest)
+    assert "XR-07 is required and was skipped" in errs
+    assert "receiver needs a commit or a content_sha256" in errs
+    assert f"audience is not {crossrun.OFFLINE_AUDIENCE}" in errs
+    assert any(e.startswith("inventions") for e in errs)
+
+
+def test_offline_template_has_the_members_of_an_offline_file(env):
+    template = json.loads((ROOT / "crossruns" / "TEMPLATE-offline.json").read_text())
+    doc = _offline(_reference_results(env))
+    assert set(template) == set(doc)
+    assert set(doc["receiver"]) <= set(template["receiver"])

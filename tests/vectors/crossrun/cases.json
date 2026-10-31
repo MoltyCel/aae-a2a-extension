@@ -132,6 +132,54 @@
       "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
       "aae": "none", "challenge_response": "valid", "activate": true,
       "expect": {"kind": "error", "jsonrpc_code": -32602, "reason_code": "aae_missing"}
+    },
+    {
+      "id": "XR-14",
+      "title": "Challenge response signed 330 seconds before the server checks it, inside the iat window (spec 7.4 step 4)",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "valid", "challenge_response": "iat_past_inside", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_COMPLETED", "verdict": "ACCEPT", "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"}
+    },
+    {
+      "id": "XR-15",
+      "title": "Challenge response signed 390 seconds before the server checks it, outside the iat window",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "valid", "challenge_response": "iat_past_outside", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_REJECTED", "verdict": "REJECT", "step": 4, "reason_code": "iat_too_old", "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"}
+    },
+    {
+      "id": "XR-16",
+      "title": "Challenge response dated 30 seconds ahead of the server clock, inside the skew",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "valid", "challenge_response": "iat_future_inside", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_COMPLETED", "verdict": "ACCEPT", "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"}
+    },
+    {
+      "id": "XR-17",
+      "title": "Challenge response dated 90 seconds ahead of the server clock, outside the skew",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "valid", "challenge_response": "iat_future_outside", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_REJECTED", "verdict": "REJECT", "step": 4, "reason_code": "iat_in_future", "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"}
+    },
+    {
+      "id": "XR-18",
+      "title": "AAE whose correctly signed payload is not JSON (spec 7.2, reading order)",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "payload_not_json", "challenge_response": "valid", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_REJECTED", "verdict": "REJECT", "step": 2, "reason_code": "payload_not_json", "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"}
+    },
+    {
+      "id": "XR-19",
+      "title": "AAE whose correctly signed payload names issuer twice, a foreign DID first (spec 7.2, reading order)",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "duplicate_issuer", "challenge_response": "valid", "activate": true,
+      "expect": {"kind": "task", "task_state": "TASK_STATE_REJECTED", "verdict": "REJECT", "step": 2, "reason_code": "payload_not_json", "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"}
     }
   ]
 }
