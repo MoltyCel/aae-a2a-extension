@@ -38,6 +38,14 @@ jobs:
         run: python -m aae_a2a.demo
       - name: Cross-run, reference against reference
         run: VENV="$(dirname "$(dirname "$(command -v python)")")" scripts/crossrun-local.sh
+      - name: Pinned bundle, fixed clock
+        run: |
+          (cd tests/vectors/crossrun/pinned && sha256sum -c --quiet MANIFEST.sha256)
+          python -m aae_a2a.crossrun serve --port 8792 --pinned tests/vectors/crossrun/pinned &
+          pid=$!
+          for i in $(seq 1 50); do curl -fs http://127.0.0.1:8792/.well-known/agent-card.json >/dev/null && break; sleep 0.2; done
+          rc=0; python -m aae_a2a.crossrun client --url http://127.0.0.1:8792 --pinned tests/vectors/crossrun/pinned || rc=$?
+          kill "$pid"; exit "$rc"
       - name: Reported cross-runs
         run: |
           shopt -s nullglob

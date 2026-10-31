@@ -1,0 +1,21 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1"
+  ],
+  "id": "did:example:issuer",
+  "verificationMethod": [
+    {
+      "id": "did:example:issuer#key-1",
+      "type": "JsonWebKey",
+      "controller": "did:example:issuer",
+      "publicKeyJwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "5AgwfQZfX_h-WGYwArxK6q4oucJWPCwC204ZN2sV_4g"
+      }
+    }
+  ],
+  "assertionMethod": [
+    "did:example:issuer#key-1"
+  ]
+}

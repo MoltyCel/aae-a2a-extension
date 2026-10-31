@@ -114,6 +114,7 @@ variant. Unless a variant says otherwise, the AAE is a VC secured as an EdDSA co
 | `read_only` | `mandate.actions` `["read"]` |
 | `other_domain` | `allowed_domains` `["other-supplier.example"]` |
 | `none` | no `aae` member; `metadata[URI]` and the message `extensions` are left out |
+| `single_use` | `validity.single_use` `true` |
 | `payload_not_json` | the same header, signed with `issuer`'s key over the payload bytes `{"issuer": "did:example:issuer", ` (not JSON) |
 | `duplicate_issuer` | the `valid` payload with a first member `"issuer": "did:example:other-agent"` added in front of it, so `issuer` appears twice; signed with `issuer`'s key |
 
@@ -138,7 +139,7 @@ parser would reject XR-19 at step 1 instead.
 
 ## 4. Cases and expected results
 
-Every case is one new task with the request part `{"skill": "place-order",
+Every case is one new task (XR-20: two, one per presentation) with the request part `{"skill": "place-order",
 "transaction": <below>}`, run in the order listed. A `server` run covers all
 cases. A `client` run must cover the `required` ones and may skip the
 `optional` ones.
@@ -164,6 +165,24 @@ cases. A `client` run must cover the `required` ones and may skip the
 | XR-17 | optional | `valid` / `iat_future_outside` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 4, `iat_in_future` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
 | XR-18 | optional | `payload_not_json` / `valid` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 2, `payload_not_json` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
 | XR-19 | optional | `duplicate_issuer` / `valid` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 2, `payload_not_json` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+| XR-20 | optional | `single_use` / `valid`, presented twice | `{"amount": 120, "currency": "EUR"}` | first `TASK_STATE_COMPLETED`, `ACCEPT`; second `TASK_STATE_REJECTED`, `REJECT`, step 5, `single_use_already_consumed` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+
+XR-06 and XR-20 form the retry pair. For both, `cases.json` states two
+expectations apart:
+
+- *authorization*: the outcome of every step except step 5 for that
+  presentation, as if no earlier use were counted. It is `ACCEPT` with steps 1,
+  2, 3, 4, 6 and 7 in all three presentations.
+- *admission*: step 5 against what the server has already accepted. XR-06 is
+  admitted. XR-20 is admitted the first time; the second time the same valid
+  authorization is not admitted, at step 5 with `single_use_already_consumed`.
+
+A live run observes admission through the verdict. Authorization cannot be
+observed from a rejection at step 5, since the server stops there; it is
+checked on the pinned bundle (Section 5). XR-20 presents one AAE twice, each
+time as a new task with its own challenge. The result entry carries an
+`attempts` list with one entry per presentation, each with the members of a
+task entry (Section 6).
 
 The `request_digest` column is the value of spec Section 8.5 for that request
 part; the result of a rejection carries it as well (spec 8.2). XR-04 uses the
@@ -185,6 +204,38 @@ scripts/crossrun-local.sh            # or: make crossrun
 This starts the reference supplier and the reference buyer as two processes on
 `127.0.0.1`, runs all cases, writes `.crossrun/local.json`, validates it, and
 logs every decision the supplier made to `.crossrun/supplier-decisions.jsonl`.
+
+**Pinned bundle** — fixed bytes for XR-01, XR-06 and XR-20, for a verifier
+that checks bytes rather than running a client, and for comparing two runs
+byte for byte. [`tests/vectors/crossrun/pinned/`](tests/vectors/crossrun/pinned/)
+holds:
+
+| File | Content |
+| :-- | :-- |
+| [`bundle.json`](tests/vectors/crossrun/pinned/bundle.json) | `verify_at`, the card `params` (audience `https://supplier.example/a2a/jsonrpc`, skills, DID methods, accepted issuers), the nonce derivation, and per case the request part, the AAE file and per attempt the challenge, the response file and the expected result with `authorization` and `admission` |
+| `XR-01.aae.jws`, `XR-06.aae.jws`, `XR-20.aae.jws` | the AAEs, one per case; XR-20's is single-use |
+| `XR-01.1.response.jws`, `XR-06.1.response.jws`, `XR-20.1.response.jws`, `XR-20.2.response.jws` | the challenge responses, one per attempt, `iat` equal to `verify_at` |
+| `did/` | the DID documents of [`tests/vectors/crossrun/did/`](tests/vectors/crossrun/did/), copied |
+| [`MANIFEST.sha256`](tests/vectors/crossrun/pinned/MANIFEST.sha256) | the SHA-256 of every other file in the bundle; `shasum -a 256 -c MANIFEST.sha256` in the directory checks them |
+
+A challenge response answers one nonce, and a server mints the nonce. For the
+pinned responses to verify, the supplier has to mint exactly the pinned nonces,
+so the bundle fixes what a deployment never fixes: the nonce key and the random
+part, both derived from public labels (`bundle.json`, `nonce`). Run it with the
+supplier's clock fixed at `verify_at`:
+
+```
+.venv/bin/python -m aae_a2a.crossrun serve --port 8790 --pinned tests/vectors/crossrun/pinned
+.venv/bin/python -m aae_a2a.crossrun client --url http://127.0.0.1:8790 --pinned tests/vectors/crossrun/pinned
+```
+
+`--pinned` fixes the clock at `verify_at`, the audience and the nonce
+derivation; `--at <RFC 3339 UTC>` alone fixes only the clock and can be used
+with any run. Present the cases in order and each attempt as a new task. The
+client checks that every challenge equals the pinned one before it answers, and
+compares each attempt with its expected result. `python -m aae_a2a.crossrun pin`
+rebuilds the bundle; the result is byte-identical, since every input is fixed
+and Ed25519 signatures are deterministic.
 
 **Role `server`** — the reference buyer against your supplier:
 
@@ -244,11 +295,15 @@ Each entry in `cases`:
 | `steps_passed` | `ACCEPT` | integers |
 | `step`, `reason_code` | `REJECT` | as returned |
 | `jsonrpc_code`, `reason_code` | JSON-RPC error | the error code and `ErrorInfo.metadata.reason_code` if present |
+| `attempts` | a case with several presentations (XR-20) | one entry per presentation, in order, each with the members above that apply |
 | `notes` | optional | free text, for example a differing `reason_code` |
 
 A case passes when `task_state`, `verdict`, `request_digest` and, for a
 rejection, `step` equal the expected values, an accepted case has
-`steps_passed` containing 1 to 7, and XR-06's task id differs from XR-01's.
+`steps_passed` containing 1 to 7, XR-06's task id differs from XR-01's, and
+where a case states `admission`, the verdict is `ACCEPT` exactly when the
+presentation is to be admitted. For XR-20 each attempt passes on its own and
+the attempts are distinct tasks.
 For an error case, `jsonrpc_code` decides. A different `reason_code` is a note,
 not a failure: spec 8.4 lets a server use codes it does not list.
 

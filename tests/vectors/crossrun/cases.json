@@ -65,7 +65,9 @@
       "aae": "valid", "challenge_response": "valid", "activate": true,
       "expect": {"kind": "task", "task_state": "TASK_STATE_COMPLETED", "verdict": "ACCEPT",
                  "request_digest": "sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a",
-                 "task_id_differs_from": "XR-01"}
+                 "task_id_differs_from": "XR-01",
+                 "authorization": {"verdict": "ACCEPT", "steps_passed": [1, 2, 3, 4, 6, 7]},
+                 "admission": {"admitted": true}}
     },
     {
       "id": "XR-07",
@@ -180,6 +182,18 @@
       "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
       "aae": "duplicate_issuer", "challenge_response": "valid", "activate": true,
       "expect": {"kind": "task", "task_state": "TASK_STATE_REJECTED", "verdict": "REJECT", "step": 2, "reason_code": "payload_not_json", "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"}
+    },
+    {
+      "id": "XR-20",
+      "title": "Retry pair: the same single-use AAE presented twice, each time as a new task (-02 section 5 step 5)",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "single_use", "challenge_response": "valid", "activate": true, "attempts": 2,
+      "expect": {"kind": "retry", "attempts": [
+        {"kind": "task", "task_state": "TASK_STATE_COMPLETED", "verdict": "ACCEPT", "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+         "authorization": {"verdict": "ACCEPT", "steps_passed": [1, 2, 3, 4, 6, 7]}, "admission": {"admitted": true}},
+        {"kind": "task", "task_state": "TASK_STATE_REJECTED", "verdict": "REJECT", "step": 5, "reason_code": "single_use_already_consumed", "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+         "authorization": {"verdict": "ACCEPT", "steps_passed": [1, 2, 3, 4, 6, 7]}, "admission": {"admitted": false, "step": 5, "reason_code": "single_use_already_consumed"}}]}
     }
   ]
 }
