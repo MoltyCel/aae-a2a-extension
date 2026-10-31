@@ -130,6 +130,7 @@ A server that supports this extension MUST list it in
 | `did_methods` | array of strings | OPTIONAL | DID method names the server can resolve locally (for example `"web"`). -02 §5.2 defers DID methods that require outbound resolution; a client SHOULD NOT present an AAE whose issuer or subject uses a method not listed here. |
 | `max_ancestors` | integer | OPTIONAL | The number of inline ancestors the server accepts in `ancestor_jws`. If present it MUST be at least 16 (-02 §5 step 9). |
 | `own_aae` | object | OPTIONAL | The server's own AAE (Section 9): `{"jws": <compact JWS>}` or `{"uri": <https URL>}`. |
+| `deferred_decisions` | boolean | OPTIONAL | `true` if the server holds a presentation whose grant verdict is PENDING until a ratification closes it (Section 7.6). Absent means `false`: PENDING is a rejection at step 6. |
 
 Clients MUST ignore `params` members they do not understand. A gated skill
 SHOULD also state its mapped action in its `AgentSkill.description`.
@@ -313,9 +314,12 @@ protocol. Their failures are A2A errors (A2A §3.3.2) and create no task.
    and not an array of strings, or there is not exactly one well-formed
    request part, the server MUST return `InvalidParamsError` (JSON-RPC
    `-32602`, A2A §9.5).
-4. If the extension is activated on a message to an existing task and
-   `metadata[URI].challenge_response` is absent or not a string, the server
-   MUST return `InvalidParamsError`.
+4. If the extension is activated on a message to an existing task with an
+   outstanding challenge and `metadata[URI].challenge_response` is absent or
+   not a string, the server MUST return `InvalidParamsError`.
+5. If the extension is activated on a message to a task held under Section
+   7.6 and `metadata[URI].ratification` is absent or not an object, the server
+   MUST return `InvalidParamsError` (`ratification_malformed`).
 
 For errors in 3 and 4 the server SHOULD include in the error details
 (A2A §3.3.2, JSON-RPC `error.data`) a `google.rpc.ErrorInfo` whose `metadata`
@@ -406,9 +410,11 @@ step:
   (-02 §2.2.1), the server MUST also evaluate them per -02 §2.2.3 with the
   request part's `transaction` as the transaction, whose `action` member is
   the action object A of -02 §2.2.2; `transaction.action.verb` MUST equal the
-  requested action. Any verdict other than PERMIT is a rejection at step 6
-  (`grant_deny`, `grant_pending`); a server that does not implement -02
-  §2.2.3 MUST reject every AAE that carries `grants` (-02 §2.2.1).
+  requested action. DENY is a rejection at step 6 (`grant_deny`). PENDING is
+  a rejection at step 6 (`grant_pending`) unless the server declares
+  `deferred_decisions: true`, in which case it holds the presentation
+  (Section 7.6). A server that does not implement -02 §2.2.3 MUST reject
+  every AAE that carries `grants` (-02 §2.2.1).
 - **Step 7, constraints** (-02 §2.3): the constraint types of -02 §2.3 map to
   the request as follows; everything else follows -02 §2.3 and §5 step 7
   (unrecognized required constraints reject, `required` absent means `true`).
@@ -452,6 +458,79 @@ server MUST reject (step 0, `issuer_not_accepted`) an AAE whose root issuer is
 not in it. The root issuer is the `issuer` of the presented AAE if it is not
 delegated, and otherwise the `issuer` of the root AAE reached in step 9.
 
+### 7.6 Deferred Decisions
+
+A grant with disposition `hold` yields PENDING (-02 §2.2.3 step 6). PENDING
+states that the mandate defers the action to a decision that has not been made
+(-02 §6.1). -02 closes such a verdict by appending a ratification record that
+refers to it (-02 §6.3), signed by an authority the mandate itself names (-02
+§6.4). This section fixes how the two records travel over A2A. It adds no
+verdict, no record and no role: every record is one of -02, and the authorities
+are the two mandate members of -02 §6.4.
+
+**Holding.** When step 6 yields PENDING at a server that declares
+`deferred_decisions: true`, the server runs steps 7 to 9 as it would for a
+PERMIT. If one of them fails, it rejects at that step, since no decision could
+make the request acceptable. Otherwise it MUST NOT invoke the skill and MUST
+move the task to `TASK_STATE_INPUT_REQUIRED` (A2A §4.1.3), with this object as
+`result` in `Task.status.message.metadata[URI]` and in `Task.metadata[URI]`:
+
+| Member | Type | Meaning |
+| :-- | :-- | :-- |
+| `verdict` | string | `"PENDING"` |
+| `draft` | string | The AAE revision verified against. |
+| `steps_passed` | array of integers | The steps that passed; 6 is absent, it is the step held. |
+| `enforce` | object | The verdict record of -02 §2.5.3: `{"verdict": "PENDING", "core", "core_digest"}`. |
+| `authorities` | array of strings | The DIDs a ratification may come from, in this order: `mandate.principal.did`, then the `did` of each `mandate.ratification_authorities` entry that carries both a `did` and a `public_key` (-02 §6.4). |
+| `aae_id` | string | The VC `id` of the presented AAE. |
+| `request_digest` | string | Section 8.5. |
+| `ratification` | object | Present after a ratification that did not close the hold (below). |
+
+An authority decides by signing the statement of -02 §6.3 over
+`enforce.core_digest`. How the record reaches an authority and how its proof
+comes back is outside this profile. The single-use reservation of step 5 stays
+in place while the task is held.
+
+**Closing.** The decision arrives as a message on the held task, with the
+extension activated, at least one part, no request part, and
+`metadata[URI]`:
+
+```json
+{"ratification": {"decision": "APPROVED",
+                  "authority_proof": {"mandate": {}, "authority": "<DID>",
+                                      "signature": "<64 octets, hexadecimal>"}}}
+```
+
+`decision` is `APPROVED` or `DISAPPROVED`; `authority_proof` is the proof of
+-02 §6.4. Any party may send the message: what counts is the proof, not the
+sender. The server MUST compute the ratification record of -02 §6.3 over the
+held verdict record. It takes the authority's key only from the mandate in the
+proof, after binding that mandate to the record's `mandate_digest`, and it
+does not interpret `role` (-02 §6.4). Then:
+
+- Status RATIFIED, decision APPROVED: the action is authorized (-02 §6.3,
+  Table 2). The server runs step 3 again at its current time and rejects at
+  step 3 if the AAE has expired since the hold. Otherwise it performs the
+  skill with exactly the held request part and reports per Section 8.3. The
+  receipt's `steps_passed` contains 6, and the receipt carries `enforce`, the
+  held PENDING record, and `ratification`.
+- Status RATIFIED, decision DISAPPROVED: the hold ends in a refusal. The
+  server rejects at step 6 with `ratification_disapproved`, carrying `enforce`
+  and `ratification`, and releases the single-use reservation.
+- Status REJECTED: the PENDING verdict stands (-02 §6.3). The task stays in
+  `TASK_STATE_INPUT_REQUIRED` with the result above, `ratification` added. A
+  later message on the task may carry another ratification.
+- A caller error of -02 §6.4 (a decision that is neither value, among others)
+  produces no record: the server returns `InvalidParamsError`
+  (`ratification_malformed`) and the task is unchanged.
+
+`ratification` is `{"status", "decision", "authority", "core", "core_digest"}`,
+the record of -02 §6.3 with its digest; the trace in its core names a failed
+predicate for a REJECTED status. In no case does the server edit or re-issue the
+held record (-02 §6.3). A ratification authorizes the one transaction the held
+record's `transaction_digest` names: the skill runs on the held request part,
+and nothing in the ratification message can change it.
+
 ## 8. Result Reporting
 
 ### 8.1 Errors
@@ -484,6 +563,7 @@ put the following object as `result` both in
 | `reason_code` | string | Section 8.4. |
 | `detail` | string | OPTIONAL. Diagnostic text; not normative. |
 | `enforce` | object | Present when grant evaluation ran: `{"verdict", "core", "core_digest"}` per -02 §2.5.3. |
+| `ratification` | object | Present when a held task was refused by a ratification (Section 7.6, `ratification_disapproved`): the -02 §6.3 record. |
 | `request_digest` | string | REQUIRED when the task has a well-formed request part (Section 6.1), which is every rejection except `no_pending_challenge` and `extension_not_activated` without one. Computed per Section 8.5. |
 
 The status message SHOULD also carry a `text` part stating step and reason.
@@ -543,6 +623,7 @@ otherwise:
 | `request_digest` | string | The request part the decision was made on (Section 8.5). Present in every receipt, whether or not grants were evaluated. |
 | `request_uri` | string | OPTIONAL. An `https` URL from which a party entitled to it can retrieve the request part. It is a retrieval path only: whoever dereferences it MUST recompute `request_digest` over what it retrieved and MUST NOT rely on content that does not match. |
 | `enforce` | object | OPTIONAL; present when grants were evaluated: `{"verdict", "core", "core_digest"}` (-02 §2.5.3), so the client or an auditor can recompute the decision. |
+| `ratification` | object | Present when a ratification closed a hold (Section 7.6): `{"status", "decision", "authority", "core", "core_digest"}` (-02 §6.3). `enforce` then carries the PENDING record it ratifies. |
 
 Without grant evaluation, `enforce` is absent, and without `request_digest`
 two receipts under the same AAE and skill would differ only in `verified_at`.
@@ -609,14 +690,16 @@ step.
 | 3 | `not_yet_valid_not_before`, `expired_not_after` |
 | 4 | `challenge_response_missing`, `challenge_response_malformed`, `challenge_response_crit_present`, `challenge_response_unencoded_payload`, `challenge_response_alg_not_eddsa`, `challenge_response_is_envelope`, `challenge_kid_invalid`, `subject_mismatch`, `subject_key_unresolved`, `challenge_signature_invalid`, `challenge_payload_members`, `nonce_malformed`, `nonce_not_authentic`, `nonce_expired`, `nonce_not_issued_for_task`, `audience_mismatch`, `aae_id_mismatch`, `iat_malformed`, `iat_in_future`, `iat_too_old`, `nonce_replayed` |
 | 5 | `single_use_already_consumed` |
-| 6 | `action_not_in_mandate`, `grant_action_verb_mismatch`, `grant_deny`, `grant_pending` |
+| 6 | `action_not_in_mandate`, `grant_action_verb_mismatch`, `grant_deny`, `grant_pending`, `ratification_disapproved` |
 | 7 | `unrecognized_required_constraint`, `constraint_unevaluable`, `currency_mismatch`, `max_transaction_value_exceeded`, `domain_not_in_allowlist`, `rate_limit_exceeded` |
 | 8 | `revocation_status_indeterminate`, `revoked` |
 | 9 | `ancestors_unbounded`, `ancestor_not_jws`, `ancestor_id_duplicated`, `ancestor_revoked`, `delegation_malformed`, `parent_aae_not_supplied`, `delegation_cycle_detected`, `delegation_recursion_limit`, `delegator_aae_hash_mismatch`, `delegator_did_mismatch`, `delegation_policy_missing`, `delegated_actions_not_subset`, `delegation_depth_inconsistent`, `delegation_max_depth_exceeds_parent`, `delegation_depth_exceeded`, `required_parent_constraint_dropped`, `required_parent_constraint_downgraded`, `unrecognized_constraint_differs`, `delegation_currency_mismatch`, `delegated_constraint_relaxed`, `delegated_allowlist_not_subset`, `delegated_rate_limit_not_narrower`, `delegated_validity_widened`, `delegated_grants_dropped`, `delegated_grant_not_covered` (and the step 1-2 codes, for an ancestor) |
 
 A `PENDING` grant verdict (-02 §6.1) means the mandate defers the action to a
-decision not yet made. Version 1 reports it as a rejection (`grant_pending`);
-it does not define how a deferred decision is obtained.
+decision not yet made. A server that does not declare `deferred_decisions`
+reports it as a rejection (`grant_pending`); one that does holds the task until
+a ratification closes it (Section 7.6). `ratification_malformed` is the
+`reason_code` of the `InvalidParamsError` of Sections 7.1 item 5 and 7.6.
 
 ### 8.5 Request Digest
 
@@ -776,7 +859,10 @@ vectors of [MoltyCel/aae-conformance-vectors](https://github.com/MoltyCel/aae-co
   in each vector's context;
 - the enforce vectors under `vectors/enforce/` with kernel `enforce_check`,
   built against -02, which fix the verdict and the -02 §2.5.3 core digest for
-  grant evaluation.
+  grant evaluation;
+- for a server that declares `deferred_decisions`, the enforce vectors with
+  kernel `ratify`, which fix the status and the core digest of the -02 §6.3
+  ratification record and the caller errors of -02 §6.4.
 
 Its `request_digest` implementation MUST reproduce the values of Appendix B.
 

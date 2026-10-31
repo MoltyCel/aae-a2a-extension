@@ -40,3 +40,12 @@ def env() -> Env:
         BASE_URL, resolver=demo_resolver(), accepted_issuers=[did_of("issuer")],
         own_aae=issue_supplier_aae(utc_now()))
     return Env(app=app, executor=executor)
+
+
+@pytest.fixture
+def deferred_env() -> Env:
+    """A supplier that holds PENDING presentations (spec 7.6)."""
+    app, _card, executor = create_supplier_app(
+        BASE_URL, resolver=demo_resolver(), accepted_issuers=[did_of("issuer")],
+        own_aae=issue_supplier_aae(utc_now()), deferred_decisions=True)
+    return Env(app=app, executor=executor)

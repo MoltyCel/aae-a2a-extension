@@ -69,9 +69,21 @@ def test_native_vector(path):
 def test_enforce_vector(path):
     with open(path, encoding="utf-8") as fh:
         vector = json.load(fh)
-    if vector.get("kernel") != "enforce_check":
-        pytest.skip("ratification vectors are outside this profile")
     inp, exp = vector["input"], vector["expected"]
+    if vector.get("kernel") == "ratify":
+        # -02 sections 6.3 and 6.4, used by deferred decisions (spec 7.6).
+        if "error" in exp:
+            with pytest.raises(enforce.RatifyError, match=exp["reason_contains"]):
+                enforce.ratify(inp.get("prior_record"), inp.get("decision"),
+                               inp.get("authority_proof"), inp.get("prev_core_digest"))
+            return
+        got = enforce.ratify(inp.get("prior_record"), inp.get("decision"),
+                             inp.get("authority_proof"), inp.get("prev_core_digest"))
+        assert (got["status"], got["decision"], got["ratifies"], got["authority"]) == \
+            (exp["status"], exp["decision"], exp["ratifies"], exp["authority"])
+        assert got["core_digest"] == exp["core_digest"]
+        assert exp["reason_contains"] in got["reason"]
+        return
     got = enforce.enforce_check(inp.get("mandate"), inp.get("transaction"), inp.get("prev_core_digest"))
     assert got["verdict"] == exp["verdict"]
     assert got["core_digest"] == exp["core_digest"]

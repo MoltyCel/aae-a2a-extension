@@ -69,6 +69,8 @@ class Accepted:
     last_step: int
     enforce_result: dict | None = None
     steps: list[int] = field(default_factory=list)
+    # PENDING held at step 6 (spec 7.6): every other step passed, 6 is open.
+    held: bool = False
 
 
 # --- helpers -----------------------------------------------------------------
@@ -506,7 +508,7 @@ class AaeVerifier:
     def verify(self, jws: str, *, now: datetime, action: str, action_ctx: dict,
                subject_binding: Callable[[dict], None],
                ancestor_jws: list | None = None,
-               transaction: dict | None = None) -> Accepted:
+               transaction: dict | None = None, hold_pending: bool = False) -> Accepted:
         """Run AAE -02 section 5 steps 1-9.
 
         subject_binding(vc) performs step 4 and raises Reject(4, ...) on failure.
@@ -524,7 +526,7 @@ class AaeVerifier:
         # Step 4 - subject binding
         subject_binding(vc)
         # Step 5 - single use (reserve; released if a later step rejects)
-        reserved = False
+        reserved, held = False, False
         if aae["validity"].get("single_use") is True:
             if not self.single_use.reserve(vc["id"]):
                 raise Reject(5, "single_use_already_consumed")
@@ -541,7 +543,8 @@ class AaeVerifier:
                     raise Reject(6, "grant_action_verb_mismatch",
                                  "transaction.action.verb must equal the mapped mandate action")
                 enforce_result = enforce.enforce_check(aae["mandate"], tx)
-                if enforce_result["verdict"] != enforce.PERMIT:
+                held = hold_pending and enforce_result["verdict"] == enforce.PENDING
+                if enforce_result["verdict"] != enforce.PERMIT and not held:
                     raise Reject(6, "grant_" + enforce_result["verdict"].lower(),
                                  enforce_result["reason"], enforce_result)
             # Step 7 - constraints
@@ -552,7 +555,7 @@ class AaeVerifier:
                 if window is not None:
                     ctx["rate_count"] = self.rate_limits.count(vc["id"], window, now)
             self.check_constraints(aae, ctx, step=7)
-            steps = [1, 2, 3, 4, 5, 6, 7]
+            steps = [1, 2, 3, 4, 5, 7] if held else [1, 2, 3, 4, 5, 6, 7]
             # Step 8 - revocation (conditional)
             if "revocation_check" in aae["validity"]:
                 self.check_revocation(vc, step=8)
@@ -570,4 +573,4 @@ class AaeVerifier:
         if isinstance(rl, dict):
             self.rate_limits.record(vc["id"], now)
         return Accepted(vc=vc, root_vc=root, last_step=steps[-1],
-                        enforce_result=enforce_result, steps=steps)
+                        enforce_result=enforce_result, steps=steps, held=held)

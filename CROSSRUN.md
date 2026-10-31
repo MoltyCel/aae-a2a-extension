@@ -28,7 +28,8 @@ produce the result file itself (Section 6).
   `params` of spec Section 4: `draft` `draft-kroehl-agentic-trust-aae-02`,
   `audience` (the URL of your JSON-RPC endpoint), `skills`
   `{"get-quote": {"action": "read"}, "place-order": {"action": "pay"}}`,
-  `did_methods` `["example"]`, `accepted_issuers` `["did:example:issuer"]`.
+  `did_methods` `["example"]`, `accepted_issuers` `["did:example:issuer"]`,
+  `deferred_decisions` `true`.
 - The JSON-RPC binding of A2A v1.0 (`SendMessage`). The reference buyer uses
   `a2a-sdk` 1.2.2.
 - DID resolution for the documents in
@@ -115,6 +116,7 @@ variant. Unless a variant says otherwise, the AAE is a VC secured as an EdDSA co
 | `other_domain` | `allowed_domains` `["other-supplier.example"]` |
 | `none` | no `aae` member; `metadata[URI]` and the message `extensions` are left out |
 | `single_use` | `validity.single_use` `true` |
+| `hold` | `mandate` is `aae_a2a/testkeys.py` `held_mandate()` of the action `{"verb": "pay", "category": "office-supplies"}`: `buyer_mandate()` plus `principal` `{"did": "did:example:principal-acme", "public_key": <principal's key>}` and one grant with disposition `hold` for that action, `amount` 0 to 300 and `currency` `EUR` |
 | `payload_not_json` | the same header, signed with `issuer`'s key over the payload bytes `{"issuer": "did:example:issuer", ` (not JSON) |
 | `duplicate_issuer` | the `valid` payload with a first member `"issuer": "did:example:other-agent"` added in front of it, so `issuer` appears twice; signed with `issuer`'s key |
 
@@ -126,6 +128,12 @@ variant. Unless a variant says otherwise, the AAE is a VC secured as an EdDSA co
 | `iat_past_outside` | `valid` with `iat` 390 seconds before now |
 | `iat_future_inside` | `valid` with `iat` 30 seconds after now |
 | `iat_future_outside` | `valid` with `iat` 90 seconds after now |
+
+| Ratification variant | Message on the held task (spec 7.6) |
+| :-- | :-- |
+| `none` | none; the case ends with the task held |
+| `principal` | `decision` `APPROVED`, the statement over `enforce.core_digest` signed with `principal`'s key, `authority` `did:example:principal-acme`, `mandate` the full mandate of the AAE |
+| `stranger` | the same, signed with `mallory`'s key, `authority` `did:example:mallory`, a DID the mandate does not name |
 
 The spec fixes the `iat` window at now minus 360 seconds to now plus 60
 seconds (Section 7.4 step 4). XR-14 to XR-17 sit 30 seconds on either side of
@@ -166,6 +174,18 @@ cases. A `client` run must cover the `required` ones and may skip the
 | XR-18 | optional | `payload_not_json` / `valid` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 2, `payload_not_json` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
 | XR-19 | optional | `duplicate_issuer` / `valid` | `{"amount": 120, "currency": "EUR"}` | `TASK_STATE_REJECTED`, `REJECT`, step 2, `payload_not_json` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
 | XR-20 | optional | `single_use` / `valid`, presented twice | `{"amount": 120, "currency": "EUR"}` | first `TASK_STATE_COMPLETED`, `ACCEPT`; second `TASK_STATE_REJECTED`, `REJECT`, step 5, `single_use_already_consumed` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
+| XR-21 | optional | `hold` / `valid`, ratification `none` | `{"action": {"verb": "pay", "category": "office-supplies"}, "amount": 120, "currency": "EUR"}` | `TASK_STATE_INPUT_REQUIRED`, `PENDING` | `sha256:91d816ca447777616f133386a3be2d0129be4e7a5edd29b5f7aabd6b2aa26c70` |
+| XR-22 | optional | `hold` / `valid`, ratification `principal` | `{"action": {"verb": "pay", "category": "office-supplies"}, "amount": 120, "currency": "EUR"}` | `TASK_STATE_COMPLETED`, `ACCEPT`, ratification `RATIFIED` | `sha256:91d816ca447777616f133386a3be2d0129be4e7a5edd29b5f7aabd6b2aa26c70` |
+| XR-23 | optional | `hold` / `valid`, ratification `stranger` | `{"action": {"verb": "pay", "category": "office-supplies"}, "amount": 120, "currency": "EUR"}` | `TASK_STATE_INPUT_REQUIRED`, `PENDING`, ratification `REJECTED` | `sha256:91d816ca447777616f133386a3be2d0129be4e7a5edd29b5f7aabd6b2aa26c70` |
+
+XR-21 to XR-23 cover a deferred decision (spec Section 7.6). The grant's
+verdict is PENDING, so the supplier holds the task in
+`TASK_STATE_INPUT_REQUIRED` with the verdict record and the authorities the
+mandate names. The client then sends the ratification of the case's variant
+on the held task, signing the statement of -02 §6.3 over
+`result.enforce.core_digest`. A ratification from the principal closes the
+hold and the skill runs. One from a DID the mandate does not name produces a
+REJECTED record and leaves the task held (-02 §6.4).
 
 XR-06 and XR-20 form the retry pair. For both, `cases.json` states two
 expectations apart:
@@ -296,6 +316,7 @@ Each entry in `cases`:
 | `step`, `reason_code` | `REJECT` | as returned |
 | `jsonrpc_code`, `reason_code` | JSON-RPC error | the error code and `ErrorInfo.metadata.reason_code` if present |
 | `attempts` | a case with several presentations (XR-20) | one entry per presentation, in order, each with the members above that apply |
+| `ratification_status` | a ratification was sent | `result.ratification.status`, `RATIFIED` or `REJECTED` |
 | `notes` | optional | free text, for example a differing `reason_code` |
 
 A case passes when `task_state`, `verdict`, `request_digest` and, for a
@@ -355,7 +376,9 @@ Runs are credited with the participant's name and the commits of both sides.
 
 ## 8. Not covered by this case set
 
-Delegation chains (step 9) and grant evaluation (step 6 with `grants`) are in
-the reference tests (`tests/test_flow.py`) and the conformance vectors, not in
-this case set. There is no hosted reference endpoint; every run is local or
+Delegation chains (step 9) are in the reference tests (`tests/test_flow.py`)
+and the conformance vectors, not in this case set. Grant evaluation is in the
+set only as the hold of XR-21 to XR-23; PERMIT and DENY under grants, a
+DISAPPROVED decision and the other REJECTED causes of -02 §6.4 are in
+`tests/test_flow.py` and `tests/test_deferred.py`. There is no hosted reference endpoint; every run is local or
 against an endpoint the participant operates.

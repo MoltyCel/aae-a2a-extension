@@ -53,7 +53,8 @@ from .challenge import ChallengeError, SubjectBinding, utc_now
 from .constants import A2A_EXTENSIONS_HEADER, AAE_DRAFT, EXTENSION_URI, MAX_ANCESTORS
 from .didres import LocalDidResolver
 from .digest import request_digest
-from .verifier import STEP_NAMES, AaeVerifier, Reject
+from . import enforce
+from .verifier import STEP_NAMES, AaeVerifier, Accepted, Reject
 
 log = logging.getLogger("aae_a2a.supplier")
 
@@ -108,6 +109,7 @@ class ProfileConfig:
     did_methods: list[str]
     required: bool = True
     own_aae: str | None = None
+    deferred_decisions: bool = False
 
     def params(self) -> dict:
         p = {
@@ -121,6 +123,8 @@ class ProfileConfig:
             p["accepted_issuers"] = self.accepted_issuers
         if self.own_aae:
             p["own_aae"] = {"jws": self.own_aae}
+        if self.deferred_decisions:
+            p["deferred_decisions"] = True
         return p
 
 
@@ -157,9 +161,10 @@ def build_agent_card(base_url: str, cfg: ProfileConfig) -> AgentCard:
 class AaeRequestHandler(DefaultRequestHandler):
     """Adds the profile's protocol checks in front of the SDK handler (spec 8.1)."""
 
-    def __init__(self, *args, required: bool, **kwargs):
+    def __init__(self, *args, required: bool, is_held=lambda _task_id: False, **kwargs):
         super().__init__(*args, **kwargs)
         self._required = required
+        self._is_held = is_held
 
     async def on_message_send(self, params: SendMessageRequest, context: ServerCallContext):
         activated = EXTENSION_URI in context.requested_extensions
@@ -170,7 +175,17 @@ class AaeRequestHandler(DefaultRequestHandler):
                     data={"extension": EXTENSION_URI})
             return await super().on_message_send(params, context)
         md = extension_metadata(params.message)
-        if params.message.task_id:
+        if params.message.task_id and self._is_held(params.message.task_id):
+            rat = md.get("ratification") if isinstance(md, dict) else None
+            if not isinstance(rat, dict) or rat.get("decision") not in (enforce.APPROVED,
+                                                                        enforce.DISAPPROVED):
+                raise _invalid("ratification_malformed",
+                               f"metadata[{EXTENSION_URI}].ratification with decision APPROVED "
+                               "or DISAPPROVED is required for a held task (spec 7.6)")
+            if request_part(params.message) is not None:
+                raise _invalid("ratification_malformed",
+                               "a ratification message carries no request part (spec 7.6)")
+        elif params.message.task_id:
             if not isinstance(md, dict) or not isinstance(md.get("challenge_response"), str):
                 raise _invalid("challenge_response_missing",
                                f"metadata[{EXTENSION_URI}].challenge_response is required")
@@ -227,6 +242,16 @@ class _Pending:
 
 
 @dataclass
+class _Held:
+    pending: _Pending
+    vc: dict
+    root_vc: dict
+    enforce_result: dict
+    steps: list
+    hold_result: dict
+
+
+@dataclass
 class SupplierExecutor(AgentExecutor):
     cfg: ProfileConfig
     verifier: AaeVerifier
@@ -237,7 +262,13 @@ class SupplierExecutor(AgentExecutor):
     # the cross-run server uses it to log what it decided (CROSSRUN.md).
     observer: callable = None
     pending: dict[str, _Pending] = field(default_factory=dict)
+    # Tasks held under PENDING until a ratification closes them (spec 7.6).
+    held: dict[str, _Held] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def is_held(self, task_id: str) -> bool:
+        with self.lock:
+            return task_id in self.held
 
     @property
     def rp_domain(self) -> str:
@@ -257,6 +288,11 @@ class SupplierExecutor(AgentExecutor):
                 status=TaskStatus(state=TaskState.TASK_STATE_SUBMITTED), history=[msg]))
             await self._first_message(context, updater)
         else:
+            with self.lock:
+                held = self.held.get(task_id)
+            if held is not None:
+                await self._ratification(context, updater, held)
+                return
             with self.lock:
                 pending = self.pending.pop(task_id, None)
             if pending is None or context.current_task.status.state != TaskState.TASK_STATE_AUTH_REQUIRED:
@@ -325,12 +361,20 @@ class SupplierExecutor(AgentExecutor):
             accepted = self.verifier.verify(
                 p.aae, now=now, action=action, subject_binding=subject_binding,
                 ancestor_jws=p.ancestor_jws, transaction=tx,
+                hold_pending=self.cfg.deferred_decisions,
                 action_ctx={"amount": tx.get("amount"), "currency": tx.get("currency"),
                             "domain": self.rp_domain})
         except Reject as r:
             await self._reject(updater, r, p.request_digest)
             return
+        if accepted.held:
+            await self._hold(updater, p, accepted)
+            return
+        await self._perform(updater, p, accepted, now, action)
 
+    async def _perform(self, updater: TaskUpdater, p: _Pending, accepted, now, action,
+                       ratification: dict | None = None) -> None:
+        tx = p.transaction
         receipt = {
             "verdict": "ACCEPT",
             "draft": AAE_DRAFT,
@@ -344,9 +388,9 @@ class SupplierExecutor(AgentExecutor):
             "request_digest": p.request_digest,
         }
         if accepted.enforce_result is not None:
-            receipt["enforce"] = {"verdict": accepted.enforce_result["verdict"],
-                                  "core": accepted.enforce_result["core"],
-                                  "core_digest": accepted.enforce_result["core_digest"]}
+            receipt["enforce"] = _enforce_view(accepted.enforce_result)
+        if ratification is not None:
+            receipt["ratification"] = ratification
         # The receipt records the decision and is in place before the skill runs.
         # What the skill then does is the task's terminal state, not the receipt.
         await updater.update_status(TaskState.TASK_STATE_WORKING,
@@ -365,11 +409,81 @@ class SupplierExecutor(AgentExecutor):
         await updater.complete(message=updater.new_agent_message(
             parts=[Part(text=f"{p.skill} done; AAE {accepted.vc['id']} verified.")]))
 
+    async def _hold(self, updater: TaskUpdater, p: _Pending, accepted) -> None:
+        """PENDING at step 6, every other step passed: hold the task (spec 7.6)."""
+        mandate = accepted.vc["credentialSubject"]["aae"]["mandate"]
+        result = {
+            "verdict": "PENDING",
+            "draft": AAE_DRAFT,
+            "steps_passed": accepted.steps,
+            "enforce": _enforce_view(accepted.enforce_result),
+            "authorities": [did for did, _k, _r in enforce.mandate_authorities(mandate)],
+            "aae_id": accepted.vc["id"],
+            "request_digest": p.request_digest,
+        }
+        with self.lock:
+            self.held[updater.task_id] = _Held(p, accepted.vc, accepted.root_vc,
+                                               accepted.enforce_result, accepted.steps, result)
+        await self._input_required(updater, result,
+                                   "The mandate defers this action to a decision (PENDING). "
+                                   "Send a ratification signed by one of the listed authorities.")
+
+    async def _input_required(self, updater: TaskUpdater, result: dict, text: str) -> None:
+        msg = updater.new_agent_message(parts=[Part(text=text)])
+        msg.metadata.update({EXTENSION_URI: {"result": result}})
+        msg.extensions.append(EXTENSION_URI)
+        self._observe(updater, result, TaskState.TASK_STATE_INPUT_REQUIRED)
+        await updater.update_status(TaskState.TASK_STATE_INPUT_REQUIRED, message=msg,
+                                    metadata={EXTENSION_URI: {"result": result}})
+
+    async def _ratification(self, context: RequestContext, updater: TaskUpdater,
+                            h: _Held) -> None:
+        """Close a hold, or not, with the ratification record of -02 6.3 (spec 7.6)."""
+        rat = extension_metadata(context.message)["ratification"]
+        prior = {"core": h.enforce_result["core"], "core_digest": h.enforce_result["core_digest"]}
+        try:
+            record = enforce.ratify(prior, rat.get("decision"), rat.get("authority_proof"))
+        except enforce.RatifyError as exc:
+            # The handler screens the decision; anything else here is ours.
+            log.error("ratification caller error on a held record: %s", exc)
+            raise
+        view = {k: record[k] for k in ("status", "decision", "authority", "core", "core_digest")}
+        if record["status"] != enforce.RATIFIED:
+            # The PENDING verdict stands; the task stays held (-02 6.3).
+            result = {**h.hold_result, "ratification": view}
+            with self.lock:
+                h.hold_result = result
+            await self._input_required(updater, result,
+                                       f"Ratification not established: {record['reason']}. "
+                                       "The action stays PENDING.")
+            return
+        with self.lock:
+            self.held.pop(updater.task_id, None)
+        p, vc = h.pending, h.vc
+        if record["decision"] == enforce.DISAPPROVED:
+            if vc["credentialSubject"]["aae"]["validity"].get("single_use") is True:
+                self.verifier.single_use.release(vc["id"])
+            r = Reject(6, "ratification_disapproved", record["reason"], h.enforce_result)
+            await self._reject(updater, r, p.request_digest, ratification=view)
+            return
+        now = self.clock()
+        try:
+            self.verifier.check_temporal(vc, now, step=3)
+        except Reject as r:
+            await self._reject(updater, r, p.request_digest, ratification=view)
+            return
+        steps = sorted(set(h.steps) | {6})
+        accepted = Accepted(vc=vc, root_vc=h.root_vc, last_step=steps[-1],
+                            enforce_result=h.enforce_result, steps=steps)
+        await self._perform(updater, p, accepted, now, self.cfg.skills[p.skill]["action"],
+                            ratification=view)
+
     def _observe(self, updater: TaskUpdater, result: dict, state: int) -> None:
         if self.observer is not None:
             self.observer(updater.task_id, result, TaskState.Name(state))
 
-    async def _reject(self, updater: TaskUpdater, r: Reject, digest: str | None = None) -> None:
+    async def _reject(self, updater: TaskUpdater, r: Reject, digest: str | None = None,
+                      ratification: dict | None = None) -> None:
         result = {
             "verdict": "REJECT",
             "draft": AAE_DRAFT,
@@ -382,9 +496,9 @@ class SupplierExecutor(AgentExecutor):
         if r.detail:
             result["detail"] = r.detail
         if r.enforce_result is not None:
-            result["enforce"] = {"verdict": r.enforce_result["verdict"],
-                                 "core": r.enforce_result["core"],
-                                 "core_digest": r.enforce_result["core_digest"]}
+            result["enforce"] = _enforce_view(r.enforce_result)
+        if ratification is not None:
+            result["ratification"] = ratification
         text = f"AAE rejected at step {r.step} ({result['step_name']}): {r.reason}"
         msg = updater.new_agent_message(parts=[Part(text=text)])
         msg.metadata.update({EXTENSION_URI: {"result": result}})
@@ -392,6 +506,10 @@ class SupplierExecutor(AgentExecutor):
         self._observe(updater, result, TaskState.TASK_STATE_REJECTED)
         await updater.update_status(TaskState.TASK_STATE_REJECTED, message=msg,
                                     metadata={EXTENSION_URI: {"result": result}})
+
+
+def _enforce_view(res: dict) -> dict:
+    return {"verdict": res["verdict"], "core": res["core"], "core_digest": res["core_digest"]}
 
 
 def _to_value(obj):
@@ -434,7 +552,7 @@ def create_supplier_app(base_url: str, *, resolver: LocalDidResolver,
                         accepted_issuers: list[str] | None, own_aae: str | None = None,
                         clock=utc_now, verifier: AaeVerifier | None = None,
                         required: bool = True, binding: SubjectBinding | None = None,
-                        audience: str | None = None) -> tuple[Starlette, AgentCard, SupplierExecutor]:
+                        audience: str | None = None, deferred_decisions: bool = False) -> tuple[Starlette, AgentCard, SupplierExecutor]:
     cfg = ProfileConfig(
         # audience is the endpoint URL unless fixed otherwise (the pinned bundle
         # names one audience wherever the supplier actually listens).
@@ -444,6 +562,7 @@ def create_supplier_app(base_url: str, *, resolver: LocalDidResolver,
         did_methods=["example"],
         required=required,
         own_aae=own_aae,
+        deferred_decisions=deferred_decisions,
     )
     card = build_agent_card(base_url, cfg)
     assert find_extension_by_uri(card, EXTENSION_URI) is not None
@@ -454,7 +573,8 @@ def create_supplier_app(base_url: str, *, resolver: LocalDidResolver,
         clock=clock,
     )
     handler = AaeRequestHandler(agent_executor=executor, task_store=InMemoryTaskStore(),
-                                agent_card=card, required=cfg.required)
+                                agent_card=card, required=cfg.required,
+                                is_held=executor.is_held)
     routes = create_agent_card_routes(agent_card=card) + create_jsonrpc_routes(
         request_handler=handler, rpc_url=RPC_PATH)
     app = Starlette(routes=routes)
