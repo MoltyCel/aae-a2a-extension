@@ -1,0 +1,232 @@
+{
+  "format": "aae-a2a-crossrun/1",
+  "form": "offline",
+  "profile": "https://moltrust.ch/extensions/aae/v1",
+  "draft": "draft-kroehl-agentic-trust-aae-02",
+  "cases_commit": "6c857eeb60a9dac379954f5be5900a10616dfc7b",
+  "cases_sha256": "sha256:9c25d66899fa2b790e3fc51ac83cb9f2fa06f07f896f08b0a2d77c462e4eb99b",
+  "run_at": "2026-10-30T20:35:06Z",
+  "participant": {
+    "name": "Prasanna Bableshwar",
+    "url": "https://github.com/bprasana/aae-a2a-crossrun"
+  },
+  "receiver": {
+    "implementation": "aae-a2a-crossrun, an independent receiver by Prasanna Bableshwar",
+    "version": "1.0",
+    "repository": "https://github.com/bprasana/aae-a2a-crossrun",
+    "commit": "04cc8c5966b8a1a4f63495a4e4ce6d71f8f3cdc7"
+  },
+  "audience": "https://supplier.example/a2a/jsonrpc",
+  "evaluation_instant": "2026-10-30T20:15:00Z",
+  "inventions": [
+    {
+      "what": "the audience value (XR-G3)",
+      "choice": "taken from the spec's Section 4 example"
+    },
+    {
+      "what": "the nonce construction (XR-G4)",
+      "choice": "a receiver-minted random part, an expiry and an HMAC-SHA256 authenticator under a receiver test secret"
+    },
+    {
+      "what": "the iat window (XR-G5)",
+      "choice": "300 seconds past, 60 seconds future"
+    },
+    {
+      "what": "the input bound per JWS, left to the server by spec Section 10.6",
+      "choice": "65536 bytes"
+    },
+    {
+      "what": "VC ids and task ids (XR-G8)",
+      "choice": "deterministic, derived by uuid5 from the case id, so the run reproduces byte for byte"
+    },
+    {
+      "what": "the evaluation instant",
+      "choice": "frozen at 2026-10-30T20:15:00Z for every temporal check and every issued validity window"
+    }
+  ],
+  "source": {
+    "note": "Reported by the participant in his own repository; this file restates that run in the format of this repository. The participant's file is kept unchanged at crossruns/sources/2026-10-30-prasanna-bableshwar-offline.source.json.",
+    "repository": "https://github.com/bprasana/aae-a2a-crossrun",
+    "commit": "04cc8c5966b8a1a4f63495a4e4ce6d71f8f3cdc7",
+    "records_commit": "a68bb04f95779200b14655ca9449e953516812b4",
+    "file": "results.json",
+    "sha256": "sha256:45474183ddc0080592f11ffa0e1a534f239e9ee253289d713a5f4a464435acf3",
+    "report": "run-report.md, findings.md"
+  },
+  "cases": [
+    {
+      "id": "XR-01",
+      "result": "pass",
+      "kind": "task",
+      "request_digest": "sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a",
+      "steps_passed": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "task_id": "task-616f826d-d1e2-5a82-8b28-8cabbf7d20d9",
+      "task_state": "TASK_STATE_COMPLETED",
+      "verdict": "ACCEPT"
+    },
+    {
+      "id": "XR-02",
+      "result": "pass",
+      "kind": "task",
+      "request_digest": "sha256:97ff82c176abd81ff1260c0885e3e25c2e651f153c6f4bcb8c6263e77d55198b",
+      "steps_passed": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "task_id": "task-9578adbb-8b6a-54c6-a0ce-1a3d139466ec",
+      "task_state": "TASK_STATE_FAILED",
+      "verdict": "ACCEPT"
+    },
+    {
+      "id": "XR-03",
+      "result": "pass",
+      "kind": "task",
+      "reason_code": "max_transaction_value_exceeded",
+      "request_digest": "sha256:edf9dc35873b6b0f0c46f8aeead5193a7dc97bcdecc6116ae68899b75e0e86d6",
+      "step": 7,
+      "task_id": "task-61045859-1141-5f2d-8b34-bbd9f4e0d348",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT"
+    },
+    {
+      "id": "XR-04",
+      "result": "pass",
+      "kind": "task",
+      "request_digest": "sha256:20673ecb3bc45abe8dd1aa5455aa90397eb769e42f9af1cff56680f4204eb0c1",
+      "steps_passed": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "task_id": "task-9e4f1e48-402a-5887-bdbc-de2eecc2c409",
+      "task_state": "TASK_STATE_COMPLETED",
+      "verdict": "ACCEPT"
+    },
+    {
+      "id": "XR-05",
+      "result": "pass",
+      "kind": "task",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "steps_passed": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "task_id": "task-2cdbc887-1471-5ae9-b1f1-0b1f671b372d",
+      "task_state": "TASK_STATE_COMPLETED",
+      "verdict": "ACCEPT"
+    },
+    {
+      "id": "XR-06",
+      "result": "pass",
+      "kind": "task",
+      "request_digest": "sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a",
+      "steps_passed": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "task_id": "task-037b0f60-88be-5a97-9dae-a6d18aee439a",
+      "task_state": "TASK_STATE_COMPLETED",
+      "verdict": "ACCEPT"
+    },
+    {
+      "id": "XR-07",
+      "result": "pass",
+      "kind": "task",
+      "reason_code": "invalid_signature",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 1,
+      "task_id": "task-27f66447-90af-538e-8231-5c4a23355c7a",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT"
+    },
+    {
+      "id": "XR-08",
+      "result": "pass",
+      "kind": "task",
+      "reason_code": "expired_not_after",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 3,
+      "task_id": "task-a03fdf2d-db76-5da5-8963-4f4284983034",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT"
+    },
+    {
+      "id": "XR-09",
+      "result": "pass",
+      "kind": "task",
+      "reason_code": "challenge_signature_invalid",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 4,
+      "task_id": "task-87211ccc-2281-523d-b805-df5873459224",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT"
+    },
+    {
+      "id": "XR-10",
+      "result": "pass",
+      "kind": "task",
+      "reason_code": "action_not_in_mandate",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 6,
+      "task_id": "task-8027d2e1-5d9e-59f1-9cee-471fa858913a",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT"
+    },
+    {
+      "id": "XR-11",
+      "result": "pass",
+      "kind": "task",
+      "reason_code": "domain_not_in_allowlist",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 7,
+      "task_id": "task-b298bfbc-01b2-5751-8751-f0f873fc33b0",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT"
+    },
+    {
+      "id": "XR-12",
+      "result": "pass",
+      "jsonrpc_code": -32008,
+      "kind": "error"
+    },
+    {
+      "id": "XR-13",
+      "result": "pass",
+      "jsonrpc_code": -32602,
+      "kind": "error",
+      "reason_code": "aae_missing"
+    }
+  ],
+  "summary": {
+    "pass": 13,
+    "fail": 0,
+    "skipped": 0
+  }
+}
