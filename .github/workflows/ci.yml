@@ -41,5 +41,5 @@ jobs:
       - name: Reported cross-runs
         run: |
           shopt -s nullglob
-          files=(); for f in crossruns/*.json; do [ "$(basename "$f")" = TEMPLATE.json ] || files+=("$f"); done
+          files=(); for f in crossruns/*.json; do case "$(basename "$f")" in TEMPLATE*.json) ;; *) files+=("$f") ;; esac; done
           if [ ${#files[@]} -gt 0 ]; then python -m aae_a2a.crossrun check "${files[@]}"; else echo "no reported runs yet"; fi

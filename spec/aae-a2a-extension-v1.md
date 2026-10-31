@@ -238,10 +238,32 @@ When the presentation passes Section 7.2, the server returns a `Task` in
 {"challenge": {"nonce": "<nonce>", "aud": "<params.audience>", "aae_id": "<VC id>"}}
 ```
 
-`nonce` has the form fixed by -02 §5 step 4 (`<random>.<expiry>.<authenticator>`);
 `aud` is the `params.audience` value; `aae_id` is the `id` of the presented
-Verifiable Credential. The status message SHOULD also carry a `text` part that
-explains the request.
+Verifiable Credential. `nonce` has the form of -02 §5 step 4, restated here
+so that a server can be built from this profile alone:
+
+```
+nonce = <random> "." <expiry> "." <authenticator>
+
+<random>         at least 32 lowercase hexadecimal digits (128 bits or more
+                 of unpredictable data)
+<expiry>         the absolute expiry in seconds since the Unix epoch, decimal,
+                 equal to the minting time plus the nonce lifetime of
+                 Section 7.4 step 4
+<authenticator>  HMAC-SHA-256 (RFC 2104) over the ASCII string
+                   <random> "." <expiry> "." <aud> "." <aae_id>
+                 under a key held by the server alone and used for nothing
+                 else, base64url without padding (43 characters)
+```
+
+The server that minted a nonce is the only party that can verify its
+authenticator, and only it does so: a nonce answers a challenge on the task it
+was issued for (Section 7.3) and is never presented to another server. A client
+treats the nonce as opaque and returns it unchanged. What another party can
+check from the form alone is whether a nonce is malformed; a server MUST reject
+a challenge response whose nonce does not match the form (`nonce_malformed`)
+before it verifies the authenticator. The status message SHOULD also carry a
+`text` part that explains the request.
 
 ### 6.3 Challenge-Response Message
 
@@ -313,8 +335,29 @@ On a valid presentation message the server MUST:
    §2.4) on `aae`.
 3. For a non-delegated AAE, apply issuer acceptance (Section 7.5).
 
+The signing-authority check of step 1 reads `issuer` and
+`mandate.delegation` from the payload, which -02 parses in step 2. A server
+MUST therefore read the `aae` in this order, here and when Section 7.4 runs
+steps 1 and 2 again:
+
+1. Bound the size (Section 10.6), split the compact JWS and parse the protected
+   header (step 1).
+2. Verify the signature over the signing input against the key the `kid`
+   names: -02 §5 step 1 (a) to (d).
+3. Parse the payload once, as UTF-8 JSON, rejecting duplicate member names at
+   any depth. A payload that is not UTF-8, is not JSON or names a member twice
+   is rejected at step 2 (`payload_not_json`); one that is JSON but not an
+   object is rejected at step 2 (`payload_not_object`).
+4. Check signing authority against the payload parsed in 3 (step 1).
+5. Run the remaining checks of step 2, then step 3.
+
+The payload parsed in 3 is the only reading of it. A server MUST NOT read it
+for step 1 with a parser more lenient than the one of step 2: with duplicate
+names allowed, a first-wins and a last-wins parser see different issuers in
+the same token, and the step at which it fails would depend on the parser.
+
 On failure the server MUST reject the task (Section 8.2) at the failing step.
-On success it MUST mint a nonce per -02 §5 step 4, bind it to this task, and
+On success it MUST mint a nonce per Section 6.2, bind it to this task, and
 return the challenge of Section 6.2.
 
 Steps 1-3 are run here so that a server does not issue challenges for
@@ -347,6 +390,15 @@ step:
   payload, no `cty` `aae+json`) and the DID URL rules, plus Section 7.3.
   This exchange is the proof of possession of -02 §5 step 4; transport-level
   client authentication, if any, does not replace it.
+
+  -02 leaves the nonce lifetime and the accepted clock skew to local policy.
+  This profile fixes both, so that two servers decide the same challenge
+  response the same way: the nonce lifetime is 300 seconds and the accepted
+  skew is 60 seconds. With `now` the server's clock when it checks the
+  response, the server MUST accept an `iat` from `now` minus 360 seconds to
+  `now` plus 60 seconds, both bounds included, and MUST reject an `iat` later
+  than that (`iat_in_future`) or earlier (`iat_too_old`). The expiry carried
+  in the nonce is checked as well and independently (-02 §5 step 4).
 - **Step 5, single use**: as in -02 §5 step 5 and §2.4. A presentation that is
   rejected in a later step SHOULD NOT consume the AAE.
 - **Step 6, action**: the requested action is `params.skills[skill].action`.
@@ -498,6 +550,14 @@ two receipts under the same AAE and skill would differ only in `verified_at`.
 receipt was issued for it. It identifies content, not an execution: two tasks
 with byte-identical request parts carry the same `request_digest`, and the task
 `id` (A2A §4.1.1) tells the executions apart.
+
+This profile leaves the form of both identifiers in a receipt open. The server
+mints the task `id`; it MUST differ from every other task id the server has
+issued and MAY be random, sequential or derived. The issuer chooses the VC
+`id`, which the receipt carries as `aae_id`; it MUST be a URI that names one
+AAE and no other. A client or auditor MUST NOT draw any conclusion from the
+form of either value beyond its identity: equality of two task ids means one
+execution, equality of two `aae_id` values means one envelope.
 
 A receipt is a statement by the server. It is not signed by this version of
 the profile; a server MAY additionally sign it, for example as a JWS in an
