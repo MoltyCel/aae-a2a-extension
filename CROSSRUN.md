@@ -296,7 +296,8 @@ One JSON file per run, format `aae-a2a-crossrun/1`. See
 | :-- | :-- |
 | `format` | `"aae-a2a-crossrun/1"` |
 | `profile`, `draft` | the extension URI and `draft-kroehl-agentic-trust-aae-02` |
-| `cases_sha256` | `sha256:` and the SHA-256 of `cases.json` as run, so a later change of the cases is visible |
+| `cases_commit` | the 40-character commit SHA of this repository whose `cases.json` the run used |
+| `cases_sha256` | `sha256:` and the SHA-256 of `cases.json` as run; it must equal the hash of `cases.json` at `cases_commit` |
 | `run_at` | RFC 3339 UTC |
 | `participant` | `name` to credit, optional `url` |
 | `client`, `server` | `implementation`, `repository`, `commit` (40-character SHA), `dirty: true` if the working tree differed from that commit; `server.agent_card` |
@@ -355,8 +356,10 @@ Validate before reporting:
 .venv/bin/python -m aae_a2a.crossrun check crossruns/2026-11-02-yourname-server.json
 ```
 
-`check` recomputes `pass` or `fail` from what each entry records, so a file
-cannot claim a pass its own observations do not support. For an interactive
+`check` reads `cases.json` at `cases_commit` from this repository, compares its
+hash with `cases_sha256`, and checks the run against those cases, not the
+current ones. It recomputes `pass` or `fail` from what each entry records, so a
+file cannot claim a pass its own observations do not support. For an interactive
 run it also requires commit SHAs for both sides and every `required` case; for
 an offline run it requires the members of Section 6.1 and every case.
 
@@ -372,7 +375,19 @@ an offline run it requires the members of Section 6.1 and every case.
 3. A failing case is worth reporting. Say in the pull request which side you
    think is wrong; if it is the reference, that is a bug here.
 
-Runs are credited with the participant's name and the commits of both sides.
+Runs are credited with the participant's name, the commits of both sides and
+the state of the cases they ran.
+
+### 7.1 A run holds for the cases it ran
+
+A run is a result about the cases at its `cases_commit` and stays valid for
+them when the case set changes later: cases are added, and expectations follow
+the profile. CI checks every reported file against its own `cases_commit`. A
+re-run against newer cases is voluntary. It is a new file with its own date and
+`cases_commit` and its own row in the credit table, and the earlier file
+stays. The reference buyer writes `cases_commit` as the commit of the checkout
+it runs from; if `cases.json` differs from that commit in the working tree, the
+run does not validate, because the cases it ran were never published.
 
 ## 8. Not covered by this case set
 
