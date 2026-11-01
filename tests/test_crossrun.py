@@ -198,7 +198,7 @@ def test_offline_template_has_the_members_of_an_offline_file(env):
     assert set(doc["receiver"]) <= set(template["receiver"])
 
 
-# --- pinned bundle and the retry pair (CROSSRUN.md 4, 5) ----------------------------
+# --- pinned bundle, the retry pair and the reuse pair (CROSSRUN.md 4, 5) -----------
 
 PINNED = FIXTURES / "pinned"
 
@@ -218,6 +218,37 @@ def test_pinned_manifest_covers_every_file():
     assert pinned.verify_manifest(PINNED) == []
 
 
+def test_pinned_nonces_follow_from_bundle_json_alone():
+    """A third party recomputes every pinned nonce from bundle.json, with no
+    aae_a2a code: hashlib, hmac and base64 only."""
+    import base64
+    import hashlib
+    import hmac
+    from datetime import datetime
+    b = json.loads((PINNED / "bundle.json").read_text(encoding="utf-8"))
+    d = b["nonce"]
+    master = hashlib.sha256(d["master_key_input"].encode("ascii")).digest()
+    key = hmac.new(master, d["key_label"].encode("ascii"), hashlib.sha256).digest()
+    verify_at = datetime.fromisoformat(b["verify_at"].replace("Z", "+00:00"))
+    expiry = str(int(verify_at.timestamp()) + d["lifetime_s"])
+    count: dict[str, int] = {}
+    for case in b["cases"]:
+        for att in case["attempts"]:
+            ch = att["challenge"]
+            count[ch["aae_id"]] = count.get(ch["aae_id"], 0) + 1
+            rnd = hashlib.sha256(f"{d['random_prefix']}{ch['aae_id']}/{count[ch['aae_id']]}"
+                                 .encode("utf-8")).hexdigest()[:32]
+            mac = hmac.new(key, f"{rnd}.{expiry}.{ch['aud']}.{ch['aae_id']}".encode("utf-8"),
+                           hashlib.sha256).digest()
+            tag = base64.urlsafe_b64encode(mac).rstrip(b"=").decode("ascii")
+            assert ch["nonce"] == f"{rnd}.{expiry}.{tag}", (case["id"], att["attempt"])
+
+
+def test_pinned_key_label_is_the_one_challenge_uses():
+    from aae_a2a import challenge, pinned
+    assert pinned.load(PINNED)["nonce"]["key_label"].encode("ascii") == challenge._KEY_LABEL
+
+
 def test_pinned_authorization_is_separate_from_admission():
     """Every attempt is a valid authorization, the second of XR-20 included."""
     from aae_a2a import pinned
@@ -229,6 +260,26 @@ def test_pinned_authorization_is_separate_from_admission():
                     (case["id"], att["attempt"])
     xr20 = next(c for c in bundle["cases"] if c["id"] == "XR-20")
     assert [a["expect"]["admission"]["admitted"] for a in xr20["attempts"]] == [True, False]
+    xr24 = next(c for c in bundle["cases"] if c["id"] == "XR-24")
+    assert [a["expect"]["admission"]["admitted"] for a in xr24["attempts"]] == [True, True]
+
+
+def test_pinned_reuse_presents_the_same_reusable_aae_with_a_new_nonce():
+    """XR-24: one AAE, single_use false, two attempts with distinct nonces.
+    XR-06 is a new request with its own AAE."""
+    from aae_a2a import pinned
+    from aae_a2a.jose import b64url_decode
+    bundle = pinned.load(PINNED)
+    by_id = {c["id"]: c for c in bundle["cases"]}
+    xr24 = by_id["XR-24"]
+    vc = json.loads(b64url_decode(pinned.read_jws(PINNED, xr24["aae"]).split(".")[1]))
+    assert vc["credentialSubject"]["aae"]["validity"]["single_use"] is False
+    nonces = [a["challenge"]["nonce"] for a in xr24["attempts"]]
+    assert len(nonces) == 2 and len(set(nonces)) == 2
+    assert {a["challenge"]["aae_id"] for a in xr24["attempts"]} == {vc["id"]}
+    assert by_id["XR-06"]["aae"] != by_id["XR-01"]["aae"]
+    assert (pinned.read_jws(PINNED, by_id["XR-06"]["aae"])
+            != pinned.read_jws(PINNED, by_id["XR-01"]["aae"]))
 
 
 def test_pinned_bytes_give_the_expected_results_with_a_fixed_clock():
@@ -244,7 +295,8 @@ def test_pinned_bytes_give_the_expected_results_with_a_fixed_clock():
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL)
     results = run(crossrun.run_pinned(BASE_URL, PINNED, httpx_client=client))
     assert [(r["id"], r["result"]) for r in results] == [("XR-01", "pass"), ("XR-06", "pass"),
-                                                         ("XR-20", "pass")], results
+                                                         ("XR-20", "pass"), ("XR-24", "pass")], \
+        results
 
 
 def test_pinned_cases_agree_with_cases_json():
