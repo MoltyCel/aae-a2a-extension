@@ -28,11 +28,18 @@
     "did/supplier.json"
   ],
   "nonce": {
-    "master_key": "SHA-256(ASCII('aae-a2a-extension/pinned/v1/nonce-master'))",
-    "random": "first 32 hex digits of SHA-256(UTF-8('aae-a2a-extension/pinned/v1/nonce/' + aae_id + '/' + n)), n counting the nonces minted for that aae_id from 1",
-    "lifetime_s": 300
+    "master_key_input": "aae-a2a-extension/pinned/v1/nonce-master",
+    "master_key": "SHA-256(ASCII(master_key_input))",
+    "key_label": "aae-a2a-extension/v1/subject-binding-nonce",
+    "key": "HMAC-SHA256(key = master_key, message = ASCII(key_label))",
+    "random_prefix": "aae-a2a-extension/pinned/v1/nonce/",
+    "random": "first 32 hex digits of SHA-256(UTF-8(random_prefix + aae_id + '/' + n)), n counting the nonces minted for that aae_id from 1",
+    "lifetime_s": 300,
+    "expiry": "decimal seconds since the Unix epoch of verify_at, plus lifetime_s",
+    "authenticator": "base64url without padding of HMAC-SHA256(key = key, message = UTF-8(random + '.' + expiry + '.' + aud + '.' + aae_id)), aud and aae_id as in the challenge",
+    "nonce": "random + '.' + expiry + '.' + authenticator"
   },
-  "description": "Fixed bytes for XR-01, XR-06 and XR-20 at verify_at. Present the cases in order, each attempt as a new task. authorization is the outcome of every step but step 5; admission is step 5 against what the server has already accepted. TEST-ONLY keys.",
+  "description": "Fixed bytes for XR-01, XR-06, XR-20 and XR-24 at verify_at. Present the cases in order, each attempt as a new task. authorization is the outcome of every step but step 5; admission is step 5 against what the server has already accepted. TEST-ONLY keys.",
   "cases": [
     {
       "id": "XR-01",
@@ -187,6 +194,77 @@
               "admitted": false,
               "step": 5,
               "reason_code": "single_use_already_consumed"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "XR-24",
+      "aae": "XR-24.aae.jws",
+      "request_part": {
+        "skill": "place-order",
+        "transaction": {
+          "amount": 120,
+          "currency": "EUR"
+        }
+      },
+      "attempts": [
+        {
+          "attempt": 1,
+          "challenge": {
+            "nonce": "878d663e5a14c22b565505c4cdc18a9c.1793610300.LqPKBQoNgbRtqh3EyN4MHhFMAU-iZkbw6vQ4VnXoqPM",
+            "aud": "https://supplier.example/a2a/jsonrpc",
+            "aae_id": "urn:uuid:38634a6e-86d2-5206-b730-c72f33e16cb8"
+          },
+          "challenge_response": "XR-24.1.response.jws",
+          "expect": {
+            "kind": "task",
+            "task_state": "TASK_STATE_COMPLETED",
+            "verdict": "ACCEPT",
+            "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+            "authorization": {
+              "verdict": "ACCEPT",
+              "steps_passed": [
+                1,
+                2,
+                3,
+                4,
+                6,
+                7
+              ]
+            },
+            "admission": {
+              "admitted": true
+            }
+          }
+        },
+        {
+          "attempt": 2,
+          "challenge": {
+            "nonce": "ee2a6e2addb73ee1b15107e4b05e7cc2.1793610300.aaKMFL59Ns5mGLbIATsl81yXk4WRdcRqYRGxGnJljvc",
+            "aud": "https://supplier.example/a2a/jsonrpc",
+            "aae_id": "urn:uuid:38634a6e-86d2-5206-b730-c72f33e16cb8"
+          },
+          "challenge_response": "XR-24.2.response.jws",
+          "expect": {
+            "kind": "task",
+            "task_state": "TASK_STATE_COMPLETED",
+            "verdict": "ACCEPT",
+            "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+            "authorization": {
+              "verdict": "ACCEPT",
+              "steps_passed": [
+                1,
+                2,
+                3,
+                4,
+                6,
+                7
+              ]
+            },
+            "admission": {
+              "admitted": true
             }
           }
         }

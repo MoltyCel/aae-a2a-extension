@@ -59,7 +59,7 @@
     },
     {
       "id": "XR-06",
-      "title": "Same request as XR-01 again: same request_digest, different task id (spec 8.3)",
+      "title": "The request part of XR-01 as a new request with a new AAE: same request_digest, different task id (spec 8.3)",
       "client_side": "required",
       "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR", "items": [{"sku": "PAPER-A4", "qty": 20}]}},
       "aae": "valid", "challenge_response": "valid", "activate": true,
@@ -218,6 +218,18 @@
       "request_part": {"skill": "place-order", "transaction": {"action": {"verb": "pay", "category": "office-supplies"}, "amount": 120, "currency": "EUR"}},
       "aae": "hold", "challenge_response": "valid", "activate": true, "ratification": "stranger",
       "expect": {"kind": "task", "task_state": "TASK_STATE_INPUT_REQUIRED", "verdict": "PENDING", "request_digest": "sha256:91d816ca447777616f133386a3be2d0129be4e7a5edd29b5f7aabd6b2aa26c70", "ratification_status": "REJECTED"}
+    },
+    {
+      "id": "XR-24",
+      "title": "Reuse: the same reusable AAE (single_use false) presented twice, each time as a new task with a new nonce (-02 section 5 step 5)",
+      "client_side": "optional",
+      "request_part": {"skill": "place-order", "transaction": {"amount": 120, "currency": "EUR"}},
+      "aae": "valid", "challenge_response": "valid", "activate": true, "attempts": 2,
+      "expect": {"kind": "retry", "attempts": [
+        {"kind": "task", "task_state": "TASK_STATE_COMPLETED", "verdict": "ACCEPT", "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+         "authorization": {"verdict": "ACCEPT", "steps_passed": [1, 2, 3, 4, 6, 7]}, "admission": {"admitted": true}},
+        {"kind": "task", "task_state": "TASK_STATE_COMPLETED", "verdict": "ACCEPT", "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+         "authorization": {"verdict": "ACCEPT", "steps_passed": [1, 2, 3, 4, 6, 7]}, "admission": {"admitted": true}}]}
     }
   ]
 }

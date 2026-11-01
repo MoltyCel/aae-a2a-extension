@@ -147,7 +147,7 @@ parser would reject XR-19 at step 1 instead.
 
 ## 4. Cases and expected results
 
-Every case is one new task (XR-20: two, one per presentation) with the request part `{"skill": "place-order",
+Every case is one new task (XR-20 and XR-24: two, one per presentation) with the request part `{"skill": "place-order",
 "transaction": <below>}`, run in the order listed. A `server` run covers all
 cases. A `client` run must cover the `required` ones and may skip the
 `optional` ones.
@@ -177,6 +177,7 @@ cases. A `client` run must cover the `required` ones and may skip the
 | XR-21 | optional | `hold` / `valid`, ratification `none` | `{"action": {"verb": "pay", "category": "office-supplies"}, "amount": 120, "currency": "EUR"}` | `TASK_STATE_INPUT_REQUIRED`, `PENDING` | `sha256:91d816ca447777616f133386a3be2d0129be4e7a5edd29b5f7aabd6b2aa26c70` |
 | XR-22 | optional | `hold` / `valid`, ratification `principal` | `{"action": {"verb": "pay", "category": "office-supplies"}, "amount": 120, "currency": "EUR"}` | `TASK_STATE_COMPLETED`, `ACCEPT`, ratification `RATIFIED` | `sha256:91d816ca447777616f133386a3be2d0129be4e7a5edd29b5f7aabd6b2aa26c70` |
 | XR-23 | optional | `hold` / `valid`, ratification `stranger` | `{"action": {"verb": "pay", "category": "office-supplies"}, "amount": 120, "currency": "EUR"}` | `TASK_STATE_INPUT_REQUIRED`, `PENDING`, ratification `REJECTED` | `sha256:91d816ca447777616f133386a3be2d0129be4e7a5edd29b5f7aabd6b2aa26c70` |
+| XR-24 | optional | `valid` / `valid`, the same AAE presented twice | `{"amount": 120, "currency": "EUR"}` | both `TASK_STATE_COMPLETED`, `ACCEPT` | `sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176` |
 
 XR-21 to XR-23 cover a deferred decision (spec Section 7.6). The grant's
 verdict is PENDING, so the supplier holds the task in
@@ -187,20 +188,24 @@ on the held task, signing the statement of -02 §6.3 over
 hold and the skill runs. One from a DID the mandate does not name produces a
 REJECTED record and leaves the task held (-02 §6.4).
 
-XR-06 and XR-20 form the retry pair. For both, `cases.json` states two
-expectations apart:
+XR-06, XR-20 and XR-24 belong together. XR-06 is a new request with a new
+AAE: the request part of XR-01 again, under an AAE of its own with its own VC
+id, so only `request_digest` is shared with XR-01. XR-20 and XR-24 each present
+one AAE twice, the same bytes both times, each time as a new task with a new
+challenge nonce. XR-20's AAE is single-use; XR-24's has `single_use` `false`
+and is reused. For all three, `cases.json` states two expectations apart:
 
 - *authorization*: the outcome of every step except step 5 for that
   presentation, as if no earlier use were counted. It is `ACCEPT` with steps 1,
-  2, 3, 4, 6 and 7 in all three presentations.
+  2, 3, 4, 6 and 7 in all five presentations.
 - *admission*: step 5 against what the server has already accepted. XR-06 is
   admitted. XR-20 is admitted the first time; the second time the same valid
   authorization is not admitted, at step 5 with `single_use_already_consumed`.
+  XR-24 is admitted both times, since a reusable AAE carries no use to consume.
 
 A live run observes admission through the verdict. Authorization cannot be
 observed from a rejection at step 5, since the server stops there; it is
-checked on the pinned bundle (Section 5). XR-20 presents one AAE twice, each
-time as a new task with its own challenge. The result entry carries an
+checked on the pinned bundle (Section 5). For XR-20 and XR-24 the result entry carries an
 `attempts` list with one entry per presentation, each with the members of a
 task entry (Section 6).
 
@@ -225,7 +230,7 @@ This starts the reference supplier and the reference buyer as two processes on
 `127.0.0.1`, runs all cases, writes `.crossrun/local.json`, validates it, and
 logs every decision the supplier made to `.crossrun/supplier-decisions.jsonl`.
 
-**Pinned bundle** — fixed bytes for XR-01, XR-06 and XR-20, for a verifier
+**Pinned bundle** — fixed bytes for XR-01, XR-06, XR-20 and XR-24, for a verifier
 that checks bytes rather than running a client, and for comparing two runs
 byte for byte. [`tests/vectors/crossrun/pinned/`](tests/vectors/crossrun/pinned/)
 holds:
@@ -233,16 +238,34 @@ holds:
 | File | Content |
 | :-- | :-- |
 | [`bundle.json`](tests/vectors/crossrun/pinned/bundle.json) | `verify_at`, the card `params` (audience `https://supplier.example/a2a/jsonrpc`, skills, DID methods, accepted issuers), the nonce derivation, and per case the request part, the AAE file and per attempt the challenge, the response file and the expected result with `authorization` and `admission` |
-| `XR-01.aae.jws`, `XR-06.aae.jws`, `XR-20.aae.jws` | the AAEs, one per case; XR-20's is single-use |
-| `XR-01.1.response.jws`, `XR-06.1.response.jws`, `XR-20.1.response.jws`, `XR-20.2.response.jws` | the challenge responses, one per attempt, `iat` equal to `verify_at` |
+| `XR-01.aae.jws`, `XR-06.aae.jws`, `XR-20.aae.jws`, `XR-24.aae.jws` | the AAEs, one per case and presented in every attempt of that case; XR-20's is single-use |
+| `XR-01.1.response.jws`, `XR-06.1.response.jws`, `XR-20.1.response.jws`, `XR-20.2.response.jws`, `XR-24.1.response.jws`, `XR-24.2.response.jws` | the challenge responses, one per attempt, `iat` equal to `verify_at` |
 | `did/` | the DID documents of [`tests/vectors/crossrun/did/`](tests/vectors/crossrun/did/), copied |
 | [`MANIFEST.sha256`](tests/vectors/crossrun/pinned/MANIFEST.sha256) | the SHA-256 of every other file in the bundle; `shasum -a 256 -c MANIFEST.sha256` in the directory checks them |
 
 A challenge response answers one nonce, and a server mints the nonce. For the
 pinned responses to verify, the supplier has to mint exactly the pinned nonces,
 so the bundle fixes what a deployment never fixes: the nonce key and the random
-part, both derived from public labels (`bundle.json`, `nonce`). Run it with the
-supplier's clock fixed at `verify_at`:
+part, both derived from public labels. `bundle.json` `nonce` states the whole
+derivation, the same as `SubjectBinding.mint()` in
+[`aae_a2a/challenge.py`](aae_a2a/challenge.py):
+
+1. master key = SHA-256 over the ASCII bytes of `master_key_input`
+   (`aae-a2a-extension/pinned/v1/nonce-master`);
+2. nonce key = HMAC-SHA256 with the master key as key over the ASCII bytes of
+   `key_label` (`aae-a2a-extension/v1/subject-binding-nonce`);
+3. random part = the first 32 hex digits of SHA-256 over the UTF-8 bytes of
+   `random_prefix` + `aae_id` + `/` + n, where n counts the nonces minted for
+   that `aae_id` from 1 in bundle order;
+4. expiry = `verify_at` in seconds since the Unix epoch plus `lifetime_s`
+   (300), as a decimal string;
+5. authenticator = base64url without padding of HMAC-SHA256 with the nonce key
+   over the UTF-8 bytes of random `.` expiry `.` `aud` `.` `aae_id`;
+6. nonce = random `.` expiry `.` authenticator.
+
+`tests/test_crossrun.py` recomputes every pinned nonce this way with `hashlib`,
+`hmac` and `base64` alone. Run the bundle with the supplier's clock fixed at
+`verify_at`:
 
 ```
 .venv/bin/python -m aae_a2a.crossrun serve --port 8790 --pinned tests/vectors/crossrun/pinned
@@ -316,7 +339,7 @@ Each entry in `cases`:
 | `steps_passed` | `ACCEPT` | integers |
 | `step`, `reason_code` | `REJECT` | as returned |
 | `jsonrpc_code`, `reason_code` | JSON-RPC error | the error code and `ErrorInfo.metadata.reason_code` if present |
-| `attempts` | a case with several presentations (XR-20) | one entry per presentation, in order, each with the members above that apply |
+| `attempts` | a case with several presentations (XR-20, XR-24) | one entry per presentation, in order, each with the members above that apply |
 | `ratification_status` | a ratification was sent | `result.ratification.status`, `RATIFIED` or `REJECTED` |
 | `notes` | optional | free text, for example a differing `reason_code` |
 
@@ -324,8 +347,8 @@ A case passes when `task_state`, `verdict`, `request_digest` and, for a
 rejection, `step` equal the expected values, an accepted case has
 `steps_passed` containing 1 to 7, XR-06's task id differs from XR-01's, and
 where a case states `admission`, the verdict is `ACCEPT` exactly when the
-presentation is to be admitted. For XR-20 each attempt passes on its own and
-the attempts are distinct tasks.
+presentation is to be admitted. For XR-20 and XR-24 each attempt passes on its
+own and the attempts are distinct tasks.
 For an error case, `jsonrpc_code` decides. A different `reason_code` is a note,
 not a failure: spec 8.4 lets a server use codes it does not list.
 

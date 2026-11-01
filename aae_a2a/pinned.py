@@ -1,5 +1,5 @@
 """The pinned bundle (CROSSRUN.md, "Pinned bundle"): fixed AAE and
-challenge-response bytes for XR-01, XR-06 and XR-20 at one fixed verification
+challenge-response bytes for XR-01, XR-06, XR-20 and XR-24 at one fixed verification
 time, with the profile parameters, DID documents and accepted issuers they were
 made for, and a manifest of hashes.
 
@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .challenge import SubjectBinding
+from .challenge import _KEY_LABEL, SubjectBinding
 from .constants import AAE_DRAFT, EXTENSION_URI
 from .didres import LocalDidResolver
 from .jose import sign_compact
@@ -46,7 +46,8 @@ ORDER = {"amount": 120, "currency": "EUR", "items": [{"sku": "PAPER-A4", "qty": 
 SMALL = {"amount": 120, "currency": "EUR"}
 # Authorization is the outcome of every step but step 5 for this presentation;
 # admission is step 5 against what the server has already accepted. The second
-# attempt of XR-20 is a valid authorization that is not admitted again.
+# attempt of XR-20 is a valid authorization that is not admitted again; XR-24
+# presents a reusable AAE twice, and both attempts are admitted.
 AUTHORIZED = {"verdict": "ACCEPT", "steps_passed": [1, 2, 3, 4, 6, 7]}
 DIGEST_ORDER = "sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a"
 DIGEST_SMALL = "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176"
@@ -73,6 +74,10 @@ CASES = [
                  "request_digest": DIGEST_SMALL, "authorization": AUTHORIZED,
                  "admission": {"admitted": False, "step": 5,
                                "reason_code": "single_use_already_consumed"}}]},
+    # XR-24 is the reuse case: one AAE file, so both attempts present the same
+    # bytes, each as a new task with a new nonce.
+    {"id": "XR-24", "transaction": SMALL, "single_use": False,
+     "expect": [_accepted(DIGEST_SMALL), _accepted(DIGEST_SMALL)]},
 ]
 
 
@@ -148,12 +153,22 @@ def build(out: Path = PINNED_DIR) -> list[Path]:
         "params": {"draft": AAE_DRAFT, "audience": AUDIENCE, "skills": SKILLS,
                    "did_methods": ["example"], "accepted_issuers": ACCEPTED_ISSUERS},
         "did_documents": sorted(f"did/{p.name}" for p in DID_DIR.glob("*.json")),
-        "nonce": {"master_key": "SHA-256(ASCII('" + _LABEL + "nonce-master'))",
-                  "random": "first 32 hex digits of SHA-256(UTF-8('" + _LABEL +
-                            "nonce/' + aae_id + '/' + n)), n counting the nonces "
-                            "minted for that aae_id from 1",
-                  "lifetime_s": 300},
-        "description": "Fixed bytes for XR-01, XR-06 and XR-20 at verify_at. Present the "
+        # Everything a third party needs to recompute each challenge nonce
+        # without this code: SubjectBinding.mint() in aae_a2a/challenge.py.
+        "nonce": {"master_key_input": _LABEL + "nonce-master",
+                  "master_key": "SHA-256(ASCII(master_key_input))",
+                  "key_label": _KEY_LABEL.decode("ascii"),
+                  "key": "HMAC-SHA256(key = master_key, message = ASCII(key_label))",
+                  "random_prefix": _LABEL + "nonce/",
+                  "random": "first 32 hex digits of SHA-256(UTF-8(random_prefix + aae_id + "
+                            "'/' + n)), n counting the nonces minted for that aae_id from 1",
+                  "lifetime_s": 300,
+                  "expiry": "decimal seconds since the Unix epoch of verify_at, plus lifetime_s",
+                  "authenticator": "base64url without padding of HMAC-SHA256(key = key, "
+                                   "message = UTF-8(random + '.' + expiry + '.' + aud + '.' + "
+                                   "aae_id)), aud and aae_id as in the challenge",
+                  "nonce": "random + '.' + expiry + '.' + authenticator"},
+        "description": "Fixed bytes for XR-01, XR-06, XR-20 and XR-24 at verify_at. Present the "
                        "cases in order, each attempt as a new task. authorization is the "
                        "outcome of every step but step 5; admission is step 5 against "
                        "what the server has already accepted. TEST-ONLY keys.",
