@@ -157,7 +157,7 @@
     {
       "id": "XR-08",
       "result": "pass",
-      "task_id": "74268701-2ef7-562e8fab-cfb5a5e838d0",
+      "task_id": "74268701-2ef7-562e-8fab-cfb5a5e838d0",
       "task_state": "TASK_STATE_REJECTED",
       "verdict": "REJECT",
       "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
