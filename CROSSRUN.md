@@ -100,8 +100,9 @@ variant. Unless a variant says otherwise, the AAE is a VC secured as an EdDSA co
 `cty` `aae+json` and `kid` `did:example:issuer#key-1`, issuer
 `did:example:issuer`, subject `did:example:buyer`, and:
 
-- `mandate`: `actions` `["read", "pay"]`, `purpose`, `scope`, `principal_did`
-  as in `aae_a2a/testkeys.py` `buyer_mandate()`;
+- `mandate`: `actions` `["read", "pay"]`, `purpose` `"Purchase office supplies
+  on behalf of the principal"`, `scope` `"procurement"`, `principal_did`
+  `"did:example:principal-acme"`;
 - `constraints`: `max_transaction_value` `{"value": 500, "currency": "EUR",
   "required": true}` and `allowed_domains` `{"value": [<host of
   params.audience>], "required": true}`;
@@ -117,7 +118,7 @@ variant. Unless a variant says otherwise, the AAE is a VC secured as an EdDSA co
 | `other_domain` | `allowed_domains` `["other-supplier.example"]` |
 | `none` | no `aae` member; `metadata[URI]` and the message `extensions` are left out |
 | `single_use` | `validity.single_use` `true` |
-| `hold` | `mandate` is `aae_a2a/testkeys.py` `held_mandate()` of the action `{"verb": "pay", "category": "office-supplies"}`: `buyer_mandate()` plus `principal` `{"did": "did:example:principal-acme", "public_key": <principal's key>}` and one grant with disposition `hold` for that action, `amount` 0 to 300 and `currency` `EUR` |
+| `hold` | `mandate` is the base mandate above for the action `{"verb": "pay", "category": "office-supplies"}`, plus `principal` `{"did": "did:example:principal-acme", "public_key": <principal's key>}` and one grant with disposition `hold` for that action, `amount` 0 to 300 and `currency` `EUR` |
 | `payload_not_json` | the same header, signed with `issuer`'s key over the payload bytes `{"issuer": "did:example:issuer", ` (not JSON) |
 | `duplicate_issuer` | the `valid` payload with a first member `"issuer": "did:example:other-agent"` added in front of it, so `issuer` appears twice; signed with `issuer`'s key |
 
