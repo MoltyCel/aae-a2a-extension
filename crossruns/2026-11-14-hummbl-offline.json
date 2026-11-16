@@ -1,0 +1,388 @@
+{
+  "format": "aae-a2a-crossrun/1",
+  "form": "offline",
+  "profile": "https://moltrust.ch/extensions/aae/v1",
+  "draft": "draft-kroehl-agentic-trust-aae-02",
+  "cases_commit": "326b9d105756015a6e23d4371534706655a4336f",
+  "cases_sha256": "sha256:d05271949d30df8f381edc4f06e5a0f103409cde982ac79f06df0146659732f3",
+  "run_at": "2026-11-14T21:19:35Z",
+  "participant": {
+    "name": "HUMMBL (Reuben Bowlby)",
+    "url": "https://github.com/hummbl-dev"
+  },
+  "receiver_provenance": "clean_room",
+  "receiver": {
+    "implementation": "hummbl-aae-receiver",
+    "version": "0.1.0",
+    "content_sha256": "sha256:305dc4a77ae4f4ee79e000216c8bb266a6edf65d70ddbbc7cbe120fb13acd91c"
+  },
+  "audience": "https://supplier.example/a2a/jsonrpc",
+  "evaluation_instant": "2026-11-02T09:00:00Z",
+  "inventions": [
+    {
+      "what": "task ids (the profile leaves their form open, Section 8.3)",
+      "choice": "deterministic: uuid5 over a per-run sequence number, so the run reproduces and XR-06 still differs from XR-01"
+    },
+    {
+      "what": "VC ids of the self-built AAEs",
+      "choice": "deterministic: uuid5 over the case id and attempt number"
+    },
+    {
+      "what": "the nonce construction for the cases the pinned bundle does not cover (the guide fixes a derivation only for the pinned bundle)",
+      "choice": "the form of profile Section 6.2: a random part derived deterministically per AAE id and mint count, expiry = evaluation instant + 300 s, HMAC-SHA256 authenticator under a receiver-local test key"
+    },
+    {
+      "what": "the evaluation instant for the whole run",
+      "choice": "frozen at the pinned bundle verify_at, 2026-11-02T09:00:00Z, for every temporal check and every issued validity window"
+    },
+    {
+      "what": "the input bound per JWS (profile Section 10.6 leaves it to the server)",
+      "choice": "65536 bytes"
+    },
+    {
+      "what": "mandate purpose, scope and principal_did of the self-built AAEs (CROSSRUN.md Section 3 incorporates them by reference to a file this run did not read)",
+      "choice": "the values the pinned bundle AAE payloads carry: purpose \"Purchase office supplies on behalf of the principal\", scope \"procurement\", principal_did \"did:example:principal-acme\""
+    },
+    {
+      "what": "the enforce_version string and the structural predicate names in verdict-record traces (-02 Section 2.5 leaves both open)",
+      "choice": "enforce_version \"v1\"; structural predicates named mandate, grants_well_formed, action_object, grant_type_match, action_binding, disposition"
+    }
+  ],
+  "cases": [
+    {
+      "id": "XR-01",
+      "result": "pass",
+      "task_id": "1c9c0914-5176-552d-80c8-9f7a544a0c0c",
+      "task_state": "TASK_STATE_COMPLETED",
+      "verdict": "ACCEPT",
+      "request_digest": "sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a",
+      "steps_passed": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "id": "XR-02",
+      "result": "pass",
+      "task_id": "57a23d54-0975-533d-99ff-c1d4bcf0979a",
+      "task_state": "TASK_STATE_FAILED",
+      "verdict": "ACCEPT",
+      "request_digest": "sha256:97ff82c176abd81ff1260c0885e3e25c2e651f153c6f4bcb8c6263e77d55198b",
+      "steps_passed": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "id": "XR-03",
+      "result": "pass",
+      "task_id": "abee51ab-3122-5734-a9ea-baa9ad5a343e",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT",
+      "request_digest": "sha256:edf9dc35873b6b0f0c46f8aeead5193a7dc97bcdecc6116ae68899b75e0e86d6",
+      "step": 7,
+      "reason_code": "max_transaction_value_exceeded"
+    },
+    {
+      "id": "XR-04",
+      "result": "pass",
+      "task_id": "c0f891b5-a2fd-5ddb-b829-f3b14f65e537",
+      "task_state": "TASK_STATE_COMPLETED",
+      "verdict": "ACCEPT",
+      "request_digest": "sha256:20673ecb3bc45abe8dd1aa5455aa90397eb769e42f9af1cff56680f4204eb0c1",
+      "steps_passed": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "id": "XR-05",
+      "result": "pass",
+      "task_id": "ca5b68f1-0edf-58aa-8c87-b7bf90e5b009",
+      "task_state": "TASK_STATE_COMPLETED",
+      "verdict": "ACCEPT",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "steps_passed": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "id": "XR-06",
+      "result": "pass",
+      "task_id": "6857372f-b5fe-527c-9c0c-fa91de257c0f",
+      "task_state": "TASK_STATE_COMPLETED",
+      "verdict": "ACCEPT",
+      "request_digest": "sha256:84559612f1f46ec0a03f8c448905af075ba4edf66e529b15b50f69c85a68b59a",
+      "steps_passed": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "id": "XR-07",
+      "result": "pass",
+      "task_id": "94939bb4-b767-54d5-a882-23711273c916",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 1,
+      "reason_code": "invalid_signature"
+    },
+    {
+      "id": "XR-08",
+      "result": "pass",
+      "task_id": "74268701-2ef7-562e8fab-cfb5a5e838d0",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 3,
+      "reason_code": "expired_not_after"
+    },
+    {
+      "id": "XR-09",
+      "result": "pass",
+      "task_id": "9b3c860f-718a-52ef-b113-4af57ba94d1a",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 4,
+      "reason_code": "challenge_signature_invalid"
+    },
+    {
+      "id": "XR-10",
+      "result": "pass",
+      "task_id": "d535e1b6-f902-5b81-9e12-d21b7b8bfcd8",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 6,
+      "reason_code": "action_not_in_mandate"
+    },
+    {
+      "id": "XR-11",
+      "result": "pass",
+      "task_id": "a8f11adc-d39e-5832-b7b2-a9830c6645ad",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 7,
+      "reason_code": "domain_not_in_allowlist"
+    },
+    {
+      "id": "XR-12",
+      "result": "pass",
+      "jsonrpc_code": -32008
+    },
+    {
+      "id": "XR-13",
+      "result": "pass",
+      "jsonrpc_code": -32602,
+      "reason_code": "aae_missing"
+    },
+    {
+      "id": "XR-14",
+      "result": "pass",
+      "task_id": "9965fde5-b8b9-5d49-951b-7b5b023a06f8",
+      "task_state": "TASK_STATE_COMPLETED",
+      "verdict": "ACCEPT",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "steps_passed": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "id": "XR-15",
+      "result": "pass",
+      "task_id": "83fdd8c5-dac4-5696-8f14-a8fd5c8075bf",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 4,
+      "reason_code": "iat_too_old"
+    },
+    {
+      "id": "XR-16",
+      "result": "pass",
+      "task_id": "0ef91eee-feef-5d89-904b-5afcfab53067",
+      "task_state": "TASK_STATE_COMPLETED",
+      "verdict": "ACCEPT",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "steps_passed": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "id": "XR-17",
+      "result": "pass",
+      "task_id": "47904662-3c05-5a88-82ef-4e9cc42807e7",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 4,
+      "reason_code": "iat_in_future"
+    },
+    {
+      "id": "XR-18",
+      "result": "pass",
+      "task_id": "858152de-ea13-59ad-92ec-f0548bfa99b8",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 2,
+      "reason_code": "payload_not_json"
+    },
+    {
+      "id": "XR-19",
+      "result": "pass",
+      "task_id": "a54a7ab5-b9dc-5c5c-928a-f16834abdb9b",
+      "task_state": "TASK_STATE_REJECTED",
+      "verdict": "REJECT",
+      "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+      "step": 2,
+      "reason_code": "payload_not_json"
+    },
+    {
+      "id": "XR-20",
+      "result": "pass",
+      "attempts": [
+        {
+          "task_id": "16575b9c-36f1-5ee6-84c3-a14ea8ac9a2a",
+          "task_state": "TASK_STATE_COMPLETED",
+          "verdict": "ACCEPT",
+          "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+          "steps_passed": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        },
+        {
+          "task_id": "e03a3d1d-c5b4-53de-a568-7b8ae1f48ab7",
+          "task_state": "TASK_STATE_REJECTED",
+          "verdict": "REJECT",
+          "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+          "step": 5,
+          "reason_code": "single_use_already_consumed"
+        }
+      ]
+    },
+    {
+      "id": "XR-21",
+      "result": "pass",
+      "task_id": "7f3287ae-3e62-56e6-92a6-17714758c2bb",
+      "task_state": "TASK_STATE_INPUT_REQUIRED",
+      "verdict": "PENDING",
+      "request_digest": "sha256:91d816ca447777616f133386a3be2d0129be4e7a5edd29b5f7aabd6b2aa26c70"
+    },
+    {
+      "id": "XR-22",
+      "result": "pass",
+      "task_id": "50693759-16d0-5b7a-899b-eca6e223e013",
+      "task_state": "TASK_STATE_COMPLETED",
+      "verdict": "ACCEPT",
+      "request_digest": "sha256:91d816ca447777616f133386a3be2d0129be4e7a5edd29b5f7aabd6b2aa26c70",
+      "steps_passed": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "ratification_status": "RATIFIED"
+    },
+    {
+      "id": "XR-23",
+      "result": "pass",
+      "task_id": "d4d0760a-1257-52ce-93d8-4121d72515d0",
+      "task_state": "TASK_STATE_INPUT_REQUIRED",
+      "verdict": "PENDING",
+      "request_digest": "sha256:91d816ca447777616f133386a3be2d0129be4e7a5edd29b5f7aabd6b2aa26c70",
+      "ratification_status": "REJECTED"
+    },
+    {
+      "id": "XR-24",
+      "result": "pass",
+      "attempts": [
+        {
+          "task_id": "a27cfd48-4372-5ff1-be31-48ba9584d210",
+          "task_state": "TASK_STATE_COMPLETED",
+          "verdict": "ACCEPT",
+          "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+          "steps_passed": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        },
+        {
+          "task_id": "e320634d-c3ef-5be6-8412-ce2788073197",
+          "task_state": "TASK_STATE_COMPLETED",
+          "verdict": "ACCEPT",
+          "request_digest": "sha256:7081684b67799fdd4045a25d028f770a8254746ff279dbabb0486bdb7eeb4176",
+          "steps_passed": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "pass": 24,
+    "fail": 0,
+    "skipped": 0
+  }
+}
