@@ -455,6 +455,50 @@ file cannot claim a pass its own observations do not support. Every run needs
 run it also requires commit SHAs for both sides and every `required` case; for
 an offline run it requires the members of Section 6.1 and every case.
 
+### 6.2 Comparing two runs
+
+Two runs of the same implementation against the same `cases_commit` agree in
+every member of the result file except those that record the time, the place
+or the execution of the run. Remove these before comparing:
+
+| Member | Why it differs between runs |
+| :-- | :-- |
+| `run_at` | wall-clock time of the run |
+| `server.agent_card` | the URL the client discovered; it carries host and port of that run |
+| `task_id` in each case and in each entry of `attempts` | an interactive server mints it per task; an offline receiver that derives it from the case id gives the same value, and removing it costs nothing |
+
+Then serialize the rest as JSON with keys sorted, no whitespace between
+tokens, strings in UTF-8 without escaping, and no trailing newline, and take
+SHA-256 of those bytes:
+
+```
+jq -jcS 'del(.run_at, .server.agent_card?, .cases[].task_id, .cases[].attempts[]?.task_id)' RESULT.json | shasum -a 256
+```
+
+Python's `json.dumps(doc, sort_keys=True, separators=(",", ":"),
+ensure_ascii=False)` encoded as UTF-8 gives the same bytes. The sorted,
+whitespace-free form makes the digest independent of indentation and of line
+endings, which differ between operating systems (Python's text mode writes
+CRLF on Windows).
+
+A report file of the participant's own, such as the `results.json` an
+offline receiver writes next to its records, is compared the same way. Every
+member that carries wall-clock time, the interpreter or operating system and
+its version, a host name, a file path or a random value is removed first, and
+the report says which members those are and gives the command it used. For
+the offline run of 2026-10-30 these are `run.run_at` and `run.runtime`
+(Python version); with both removed, runs under Python 3.12.3, 3.12.12 and
+3.13.12 give the same SHA-256,
+`2812e32272e28f57111c25e045d4010c09597b92dfe8521628e617d9cdc44529`, from
+
+```
+jq -jcS 'del(.run.run_at, .run.runtime)' results.json | shasum -a 256
+```
+
+Files written as text, such as records and exchange files, compare byte for
+byte only between runs on systems with the same line ending; across Windows
+and Unix, convert CRLF to LF first.
+
 ## 7. Reporting a run
 
 1. Publish the result file in your own repository if you can; that is your
